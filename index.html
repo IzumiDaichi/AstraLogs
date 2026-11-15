@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090d1d">
+  <title>AstraLogs</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <section id="setup" class="setup-card" hidden>
+    <p class="eyebrow">ASTRALOGS</p>
+    <h1 id="authTitle">Sign in to your log</h1>
+    <p id="authDescription" class="sub">Sign in with your username and password.</p>
+    <form id="loginForm" autocomplete="on">
+      <label for="loginUsername">Username</label>
+      <input id="loginUsername" type="text" required autocomplete="username" minlength="3" maxlength="30" pattern="[A-Za-z0-9._\-]+">
+      <label for="loginPassword">Password</label>
+      <input id="loginPassword" type="password" required autocomplete="current-password">
+      <div id="confirmPasswordField" hidden>
+        <label for="confirmPassword">Confirm password</label>
+        <input id="confirmPassword" type="password" autocomplete="new-password">
+      </div>
+      <div class="actions">
+        <button id="authSubmit" type="submit" class="primary">Sign in</button>
+        <button id="authModeToggle" type="button" class="secondary">Create account</button>
+      </div>
+    </form>
+    <form id="profileForm" autocomplete="on" hidden>
+      <label for="myName">Your name</label>
+      <input id="myName" type="text" required autocomplete="name">
+      <label for="myDept">Your department</label>
+      <input id="myDept" type="text" required>
+      <div class="actions">
+        <button type="submit" class="primary">Save profile</button>
+        <button type="button" class="secondary" id="cancelProfile" hidden>Cancel</button>
+      </div>
+    </form>
+    <p id="registrationNotice" class="hint">Create private collections and share selected collections with your groups.</p>
+    <p id="setupStatus" class="message" role="status" aria-live="polite"></p>
+  </section>
+
+  <section id="app" class="app-shell" hidden>
+    <aside id="sidebar" class="sidebar" aria-label="Main navigation">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">✦</span>
+        <span>AstraLogs</span>
+        <button id="closeMenu" class="icon-button close-menu" type="button" aria-label="Close menu">×</button>
+      </div>
+      <p class="sidebar-label">YOUR UNIVERSE</p>
+      <nav class="side-nav">
+        <button type="button" class="nav-item" data-view="dashboard">
+          <span class="nav-icon" aria-hidden="true">⌂</span> Dashboard
+        </button>
+        <button type="button" class="nav-item" data-view="entry">
+          <span class="nav-icon" aria-hidden="true">＋</span> Enter New Entry
+        </button>
+        <div id="collectionsNav" class="nav-collections">
+          <div class="collection-nav-header">
+            <button type="button" id="collectionsNavButton" class="nav-item collection-nav-main" data-view="logbooks">
+              <span class="nav-icon" aria-hidden="true">▣</span> Collections
+              <span id="logbookCount" class="nav-count"></span>
+            </button>
+            <button type="button" id="collectionDropdownToggle" class="collection-dropdown-toggle" aria-label="Show collections" aria-expanded="false" aria-controls="collectionNavList">
+              <span class="collection-chevron" aria-hidden="true">⌄</span>
+            </button>
+          </div>
+          <div id="collectionNavList" class="collection-nav-list" aria-label="Your collections" hidden></div>
+        </div>
+        <button type="button" class="nav-item" data-view="team">
+          <span class="nav-icon" aria-hidden="true">♧</span> Team
+          <span id="teamCount" class="nav-count"></span>
+        </button>
+        <div class="nav-divider" role="separator"></div>
+        <button type="button" class="nav-item" data-view="timeRecords">
+          <span class="nav-icon" aria-hidden="true">◷</span> Time Records
+        </button>
+      </nav>
+      <div class="sidebar-account">
+        <div class="avatar" id="userAvatar" aria-hidden="true"></div>
+        <div class="account-copy">
+          <strong id="submitterName"></strong>
+          <span>Current profile</span>
+        </div>
+        <button type="button" class="icon-button" id="editSetup" aria-label="Edit profile" title="Edit profile">⋯</button>
+        <button type="button" class="icon-button signout-button" id="signOut" aria-label="Sign out" title="Sign out">↪</button>
+      </div>
+    </aside>
+    <button id="menuBackdrop" class="menu-backdrop" type="button" aria-label="Close navigation" hidden></button>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button type="button" class="icon-button menu-toggle" id="menuToggle" aria-label="Toggle navigation" aria-expanded="true" aria-controls="sidebar">☰</button>
+        <div>
+          <p class="eyebrow">YOUR WORK UNIVERSE</p>
+          <h1 id="titleText"></h1>
+          <p id="workspaceStatus" class="message" role="status" aria-live="polite"></p>
+        </div>
+      </header>
+
+      <section id="dashboardView" class="app-view">
+        <div class="storage-note">
+          <span class="storage-dot" aria-hidden="true"></span>
+          A quick look at recent accomplishments and daily time records.
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel dashboard-panel" aria-labelledby="dashboardAccomplishmentsTitle">
+            <h2 id="dashboardAccomplishmentsTitle">Recent accomplishments</h2>
+            <div id="dashboardAccomplishments" class="dashboard-list" aria-live="polite"></div>
+          </section>
+          <section class="panel dashboard-panel" aria-labelledby="dashboardTimeTitle">
+            <h2 id="dashboardTimeTitle">Recent time records</h2>
+            <div id="dashboardTimeRecords" class="table-wrap"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="logsView" class="app-view" hidden>
+        <div class="storage-note">
+          <span class="storage-dot" aria-hidden="true"></span>
+          Accomplishments are individual records. A collection groups related records together.
+        </div>
+        <div class="panel logbook-toolbar">
+          <label for="logsLogbook">Collection</label>
+          <select id="logsLogbook" aria-label="Choose a collection"></select>
+          <span id="entryCount" class="count"></span>
+        </div>
+        <div class="panel filters">
+          <label for="period">Show</label>
+          <select id="period">
+            <option value="day">By day</option>
+            <option value="week">By week</option>
+            <option value="custom">Custom range</option>
+            <option value="all">All accomplishments</option>
+          </select>
+          <div id="dayFilter" class="filter-date">
+            <label for="filterDay">Date</label>
+            <input id="filterDay" type="date">
+          </div>
+          <div id="weekFilter" class="filter-date" hidden>
+            <label for="filterWeek">Week containing</label>
+            <input id="filterWeek" type="date">
+          </div>
+          <div id="customFilter" class="custom-dates" hidden>
+            <div>
+              <label for="filterFrom">From</label>
+              <input id="filterFrom" type="date">
+            </div>
+            <div>
+              <label for="filterTo">To</label>
+              <input id="filterTo" type="date">
+            </div>
+          </div>
+        </div>
+        <div id="historyList" class="entry-list" aria-live="polite"></div>
+      </section>
+
+      <section id="logbooksView" class="app-view" hidden>
+        <section class="panel team-panel collection-create-panel" aria-labelledby="createLogbookTitle">
+          <h3 id="createLogbookTitle">Create a collection</h3>
+          <form id="createLogbookForm" class="collection-create-form" autocomplete="off">
+            <div>
+              <label for="newLogbookName">Collection name</label>
+              <input id="newLogbookName" type="text" required maxlength="80" placeholder="e.g. Internship milestones">
+            </div>
+            <div>
+              <label for="newLogbookGroup">Sharing</label>
+              <select id="newLogbookGroup"></select>
+            </div>
+            <button id="createLogbookButton" type="submit" class="primary">Create collection</button>
+            <p class="hint">Private collections are visible only to you. Choose a group to share.</p>
+            <p id="logbookStatus" class="message" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+        <span id="logbooksTotal" class="count logbooks-total"></span>
+        <div id="logbookList" class="logbook-list" aria-live="polite"></div>
+      </section>
+
+      <section id="entryView" class="app-view" hidden>
+        <div id="entryNoLogbooks" class="empty-state" hidden>
+          <strong>Create a collection first</strong>
+          <span>Every accomplishment needs a collection to keep related records together.</span>
+          <button id="goToLogbooks" type="button" class="primary empty-create-button">Go to Collections</button>
+        </div>
+        <section id="entryFormPanel" class="panel form-panel">
+          <form id="report" autocomplete="off">
+            <div id="entryDestination" class="entry-destination">
+              <label for="entryLogbook">Save this accomplishment in <span class="required">*</span></label>
+              <select id="entryLogbook" required></select>
+              <p class="hint">Choose a collection. You can create and manage collections from the Collections page.</p>
+            </div>
+            <div id="entryFields">
+            <div class="times">
+              <div>
+                <label for="log_date">Date recorded <span class="required">*</span></label>
+                <input id="log_date" type="date" required>
+              </div>
+              <div>
+                <label for="department">Department <span class="required">*</span></label>
+                <input id="department" type="text" required placeholder="Department where the task was done">
+              </div>
+            </div>
+            <div class="times">
+              <div>
+                <label for="time_request">Time of Request <span class="hint">Optional</span></label>
+                <input id="time_request" type="time">
+              </div>
+              <div>
+                <label for="time_completion">Time of Completion <span class="hint">Optional</span></label>
+                <input id="time_completion" type="time">
+              </div>
+            </div>
+            <fieldset>
+              <legend>Name of Intern(s) who did the task <span class="required">*</span></legend>
+              <div id="people"></div>
+              <p class="hint">Select everyone who contributed. Your profile is selected by default.</p>
+            </fieldset>
+            <label for="task">Task Performed <span class="required">*</span></label>
+            <input id="task" type="text" required placeholder="What was accomplished?">
+            <label for="notes">Notes / Resolution <span class="hint">Optional</span></label>
+            <textarea id="notes" rows="3" placeholder="Add context, outcome, or resolution"></textarea>
+            <div class="actions">
+              <button type="submit" class="primary">Submit accomplishment</button>
+              <button type="reset" class="secondary" id="clearBtn">Clear</button>
+            </div>
+            </div>
+            <p id="status" class="message" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+      </section>
+
+      <section id="teamView" class="app-view" hidden>
+        <p id="teamDescription" class="sub team-description">Create groups, invite collaborators, and choose which collections to share with them.</p>
+        <div class="storage-note">
+          <span class="storage-dot" aria-hidden="true"></span>
+          Group members can access only the collections you choose to share.
+        </div>
+        <section class="panel team-panel team-tools-panel" aria-labelledby="teamToolsTitle">
+          <div class="team-heading">
+            <h3 id="teamToolsTitle">Selected group</h3>
+            <select id="teamGroupSelect" aria-label="Choose a group"></select>
+          </div>
+          <div class="team-tools-grid">
+            <form id="createGroupForm" autocomplete="off">
+              <h3>Create a group</h3>
+              <div class="addrow">
+                <input id="groupName" type="text" required maxlength="80" placeholder="Group name">
+                <button type="submit" class="primary">Create</button>
+              </div>
+              <p id="createGroupStatus" class="message" role="status" aria-live="polite"></p>
+            </form>
+            <form id="inviteForm" autocomplete="off">
+              <h3>Invite to selected group</h3>
+              <div class="addrow">
+                <input id="inviteUsername" type="text" required minlength="3" maxlength="30" pattern="[A-Za-z0-9._\-]+" placeholder="Username">
+                <button type="submit" class="primary">Invite</button>
+              </div>
+              <p id="inviteStatus" class="message" role="status" aria-live="polite"></p>
+            </form>
+          </div>
+        </section>
+        <section class="invite-section">
+          <h3>Invitations for you</h3>
+          <div id="receivedInvites" class="team-list"></div>
+        </section>
+        <section id="sentInvitesSection" class="invite-section">
+          <h3>Sent invitations</h3>
+          <div id="sentInvites" class="team-list"></div>
+        </section>
+        <div class="team-heading members-heading">
+          <h3>Group members <span id="teamMemberCount" class="count"></span></h3>
+        </div>
+        <div id="teamList" class="team-list"></div>
+      </section>
+
+      <section id="timeRecordsView" class="app-view" hidden>
+        <div class="storage-note">
+          <span class="storage-dot" aria-hidden="true"></span>
+          Record Morning and Afternoon In/Out times. Quick punches use your current local date and time.
+        </div>
+        <section class="panel time-record-panel" aria-labelledby="quickPunchTitle">
+          <div class="time-record-heading">
+            <div>
+              <h2 id="quickPunchTitle">Quick punch</h2>
+              <p class="hint">The current time determines whether a punch is Morning or Afternoon.</p>
+            </div>
+            <div class="time-sharing">
+              <label for="timeShareGroup">Sharing</label>
+              <select id="timeShareGroup">
+                <option value="">Private — only me</option>
+              </select>
+            </div>
+          </div>
+          <div class="quick-punch-actions">
+            <button id="quickLogIn" type="button" class="primary">Quick Log In</button>
+            <button id="quickLogOut" type="button" class="secondary">Quick Log Out</button>
+          </div>
+          <p id="timeRecordStatus" class="message" role="status" aria-live="polite"></p>
+          <p class="hint">Sharing is set by the first punch of each date. Quick punches won't replace an existing time; use manual entry to correct it.</p>
+        </section>
+
+        <section class="panel time-record-panel manual-time-panel" aria-labelledby="manualPunchTitle">
+          <h2 id="manualPunchTitle">Add or correct a punch</h2>
+          <form id="manualTimeForm" class="manual-time-form" autocomplete="off">
+            <div>
+              <label for="manualPunchDate">Date</label>
+              <input id="manualPunchDate" type="date" required>
+            </div>
+            <div>
+              <label for="manualPunchType">Punch</label>
+              <select id="manualPunchType" required>
+                <option value="morning_in">Morning In</option>
+                <option value="morning_out">Morning Out</option>
+                <option value="afternoon_in">Afternoon In</option>
+                <option value="afternoon_out">Afternoon Out</option>
+              </select>
+            </div>
+            <div>
+              <label for="manualPunchTime">Time</label>
+              <input id="manualPunchTime" type="time" required>
+            </div>
+            <button type="submit" class="primary">Save manual punch</button>
+          </form>
+        </section>
+
+        <section class="panel time-record-panel">
+          <h2>Recent daily records</h2>
+          <div id="timeRecordsTable" class="table-wrap"></div>
+        </section>
+      </section>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/helpers.js"></script>
+<script src="js/state.js"></script>
+<script src="js/backend.js"></script>
+<script src="js/setup.js"></script>
+<script src="js/people.js"></script>
+<script src="js/report.js"></script>
+<script src="js/time_records.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
