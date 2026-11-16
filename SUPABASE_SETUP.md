@@ -11,21 +11,40 @@ AstraLogs uses Supabase Auth and PostgreSQL for username/password accounts, name
 5. In **Authentication → Settings**, enable public sign-ups and turn off **Confirm email**. Without this setting, Supabase requires an email confirmation and username-only registration cannot complete.
 6. Deploy this static app over HTTPS (or use a local HTTP server while developing). Do not open `index.html` directly as a `file://` URL for sign-in.
 
-## 2. Register and sign in
+## 2. Publish and install as an app
 
-Select **Create account** and choose a username (3–30 letters, numbers, periods, underscores, or hyphens) and password (at least 8 characters). The app creates an Auth account without collecting an email, then uses the username as the initial profile name. Create your first named collection from **Collections**; it can be private or shared with one of your groups.
+AstraLogs is an installable Progressive Web App (PWA). Cloudflare Pages is a good free static host; Vercel's Hobby plan is another option. The app must be served over HTTPS; the host provides that automatically.
 
-## 3. Accomplishments, collections, and groups
+Live app: https://astralogs.pages.dev/
+
+For the current Cloudflare setup, use **Workers & Pages → Create application → Get started → Drag and drop your files**, then upload `AstraLogs-PWA-deploy.zip`. This package includes the ignored local Supabase browser config, which contains a publishable key. Cloudflare Direct Upload projects cannot later be converted to Git-integrated projects; choose Git integration instead if automatic deploys are required.
+
+After deployment, each person opens the site once to install it:
+
+- **iPhone/iPad:** Open the site in Safari, tap **Share**, then **Add to Home Screen**. Launch AstraLogs from the new icon afterward.
+- **Android:** Open the site in Chrome and choose **Install app** (or **Add to Home screen**) from the browser menu. The AstraLogs sidebar also offers an install button when the browser supports a direct prompt.
+- **Desktop:** Use the browser's install icon or menu, or the AstraLogs sidebar's **Install app** button.
+
+The app caches its static interface for launch, but sign-in and Supabase data still require an internet connection. Users need the published address for the initial installation and for sharing the app with new devices.
+
+The illustrated [iPhone and iPad installation guide](https://astralogs.pages.dev/ios-install.html) shows each step.
+
+## 3. Register and sign in
+
+Select **Create account** and choose a username (3–30 letters, numbers, periods, underscores, or hyphens) and password (at least 8 characters). The username remains your login ID; your profile nickname is used for team and accomplishment displays. Create your first named collection from **Collections**; it can be private or shared with one of your groups.
+
+## 4. Accomplishments, collections, and groups
 
 - An accomplishment is one individual record of work.
 - Collections (called logbooks in the database) organize related accomplishment records. Each user can create multiple named collections.
-- A private collection is visible only to its owner.
-- When creating a collection, its owner can assign one group they belong to. Every accepted member of that group can view and edit accomplishments in that collection. Other collections remain private unless explicitly shared.
+- A private collection is listed for its owner; a teammate selected on an accomplishment can also see that entry and its collection listing, but not other entries.
+- When creating a collection, its owner can assign one group they belong to. Collections continue to be shared with that group, while newly submitted accomplishments are visible only to the submitter and the selected interns. Older accomplishments retain their existing collection access.
 - The collection owner manages the collection itself and can choose the assigned group when creating it.
 - The Dashboard shows recent accomplishments across accessible collections and recent daily time records.
 - Time Records store one row per person and date, with Morning In/Out and Afternoon In/Out punches. Quick punches use the current local date and time; manual punches can add or correct a date and time.
-- Time records are private by default. A person may choose a group when recording the first punch of a date; that day's record is then visible to members of that group and includes the person's profile name. Private records are visible only to their owner and omit the name from the table.
-- Create as many groups as needed from **Team**. A username invitation must be accepted before the person becomes a group member.
+- Time records are private to their owner and cannot be shared with groups. On the Time Records page, each record can be edited (date and punch times) or deleted.
+- Create as many groups as needed from **Team**. Each group has a unique five-character alphanumeric invite code that members can share; entering it sends a join request that the group owner must approve. Group owners can remove other members with the **×** control. Username invitations remain available and must be accepted before joining.
+- Apply the latest `supabase/schema.sql` before using group codes or member removal. It refreshes older codes to the five-character format and replaces any outdated code-format constraint; share the newly displayed codes afterward.
 - Users can belong to multiple groups. Invitations and team-member views are scoped to the selected group.
 - Existing group accomplishment records are migrated into a collection shared with their original group. Existing user-only records are migrated into a private collection.
 - Row-level security enforces collection and group access. The browser uses only the publishable/anon key; never expose a service-role key.

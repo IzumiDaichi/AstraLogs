@@ -2,9 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#090d1d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="AstraLogs">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>AstraLogs</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/astralogs.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -16,6 +22,10 @@
     <form id="loginForm" autocomplete="on">
       <label for="loginUsername">Username</label>
       <input id="loginUsername" type="text" required autocomplete="username" minlength="3" maxlength="30" pattern="[A-Za-z0-9._\-]+">
+      <div id="registerNicknameField" hidden>
+        <label for="registerNickname">Nickname (shown on entries)</label>
+        <input id="registerNickname" type="text" autocomplete="nickname" maxlength="80">
+      </div>
       <label for="loginPassword">Password</label>
       <input id="loginPassword" type="password" required autocomplete="current-password">
       <div id="confirmPasswordField" hidden>
@@ -28,8 +38,8 @@
       </div>
     </form>
     <form id="profileForm" autocomplete="on" hidden>
-      <label for="myName">Your name</label>
-      <input id="myName" type="text" required autocomplete="name">
+      <label for="myNickname">Nickname (shown on entries)</label>
+      <input id="myNickname" type="text" required autocomplete="nickname">
       <label for="myDept">Your department</label>
       <input id="myDept" type="text" required>
       <div class="actions">
@@ -38,6 +48,7 @@
       </div>
     </form>
     <p id="registrationNotice" class="hint">Create private collections and share selected collections with your groups.</p>
+    <p class="hint"><a href="./ios-install.html">iPhone and iPad install guide</a></p>
     <p id="setupStatus" class="message" role="status" aria-live="polite"></p>
   </section>
 
@@ -76,12 +87,18 @@
         <button type="button" class="nav-item" data-view="timeRecords">
           <span class="nav-icon" aria-hidden="true">◷</span> Time Records
         </button>
+        <button type="button" class="nav-item" data-view="integrations">
+          <span class="nav-icon" aria-hidden="true">⚙</span> Integrations
+        </button>
+        <button type="button" class="nav-item" id="installAppButton">
+          <span class="nav-icon" aria-hidden="true">⇩</span> Install app
+        </button>
       </nav>
       <div class="sidebar-account">
         <div class="avatar" id="userAvatar" aria-hidden="true"></div>
         <div class="account-copy">
           <strong id="submitterName"></strong>
-          <span>Current profile</span>
+          <span id="sidebarUsername"></span>
         </div>
         <button type="button" class="icon-button" id="editSetup" aria-label="Edit profile" title="Edit profile">⋯</button>
         <button type="button" class="icon-button signout-button" id="signOut" aria-label="Sign out" title="Sign out">↪</button>
@@ -98,6 +115,10 @@
           <p id="workspaceStatus" class="message" role="status" aria-live="polite"></p>
         </div>
       </header>
+      <div id="offlineStatus" class="offline-status" role="status" aria-live="polite" hidden>
+        <span id="offlineStatusMessage"></span>
+        <button id="offlineSyncButton" class="secondary" type="button" hidden>Sync now</button>
+      </div>
 
       <section id="dashboardView" class="app-view">
         <div class="storage-note">
@@ -111,7 +132,7 @@
           </section>
           <section class="panel dashboard-panel" aria-labelledby="dashboardTimeTitle">
             <h2 id="dashboardTimeTitle">Recent time records</h2>
-            <div id="dashboardTimeRecords" class="table-wrap"></div>
+            <div id="dashboardTimeRecords" class="dashboard-time-list" aria-live="polite"></div>
           </section>
         </div>
       </section>
@@ -184,6 +205,9 @@
           <button id="goToLogbooks" type="button" class="primary empty-create-button">Go to Collections</button>
         </div>
         <section id="entryFormPanel" class="panel form-panel">
+          <div id="entryReadOnly" class="empty-state" hidden>
+            <span>You can view entries shared with you, but only collection owners and group members can add entries.</span>
+          </div>
           <form id="report" autocomplete="off">
             <div id="entryDestination" class="entry-destination">
               <label for="entryLogbook">Save this accomplishment in <span class="required">*</span></label>
@@ -214,7 +238,7 @@
             <fieldset>
               <legend>Name of Intern(s) who did the task <span class="required">*</span></legend>
               <div id="people"></div>
-              <p class="hint">Select everyone who contributed. Your profile is selected by default.</p>
+              <p class="hint">Select everyone who contributed. Only selected team members can view this entry. Your profile is selected by default.</p>
             </fieldset>
             <label for="task">Task Performed <span class="required">*</span></label>
             <input id="task" type="text" required placeholder="What was accomplished?">
@@ -236,20 +260,22 @@
           <span class="storage-dot" aria-hidden="true"></span>
           Group members can access only the collections you choose to share.
         </div>
+        <section class="panel team-panel create-group-panel" aria-labelledby="createGroupTitle">
+          <h3 id="createGroupTitle">Create a group</h3>
+          <form id="createGroupForm" class="create-group-form" autocomplete="off">
+            <div class="addrow">
+              <input id="groupName" type="text" required maxlength="80" placeholder="Group name">
+              <button type="submit" class="primary">Create group</button>
+            </div>
+            <p id="createGroupStatus" class="message" role="status" aria-live="polite"></p>
+          </form>
+        </section>
         <section class="panel team-panel team-tools-panel" aria-labelledby="teamToolsTitle">
           <div class="team-heading">
             <h3 id="teamToolsTitle">Selected group</h3>
             <select id="teamGroupSelect" aria-label="Choose a group"></select>
           </div>
           <div class="team-tools-grid">
-            <form id="createGroupForm" autocomplete="off">
-              <h3>Create a group</h3>
-              <div class="addrow">
-                <input id="groupName" type="text" required maxlength="80" placeholder="Group name">
-                <button type="submit" class="primary">Create</button>
-              </div>
-              <p id="createGroupStatus" class="message" role="status" aria-live="polite"></p>
-            </form>
             <form id="inviteForm" autocomplete="off">
               <h3>Invite to selected group</h3>
               <div class="addrow">
@@ -257,6 +283,22 @@
                 <button type="submit" class="primary">Invite</button>
               </div>
               <p id="inviteStatus" class="message" role="status" aria-live="polite"></p>
+            </form>
+            <div id="groupInviteCodePanel" class="group-invite-code-panel" hidden>
+              <h3>Group invite code</h3>
+              <div class="group-invite-code-row">
+                <code id="groupInviteCode"></code>
+                <button id="copyGroupInviteCode" type="button" class="secondary">Copy</button>
+              </div>
+              <p id="groupInviteCodeHint" class="hint">Share this code. The group owner must approve join requests.</p>
+            </div>
+            <form id="joinGroupForm" autocomplete="off">
+              <h3>Request to join a group</h3>
+              <div class="addrow">
+                <input id="joinGroupCode" type="text" required maxlength="5" pattern="[A-Za-z0-9]{5}" placeholder="Enter 5-character invite code" autocomplete="off" autocapitalize="characters" spellcheck="false">
+                <button type="submit" class="primary">Request</button>
+              </div>
+              <p id="joinGroupStatus" class="message" role="status" aria-live="polite"></p>
             </form>
           </div>
         </section>
@@ -267,6 +309,10 @@
         <section id="sentInvitesSection" class="invite-section">
           <h3>Sent invitations</h3>
           <div id="sentInvites" class="team-list"></div>
+        </section>
+        <section id="joinRequestsSection" class="invite-section" hidden>
+          <h3>Join requests</h3>
+          <div id="joinRequests" class="team-list"></div>
         </section>
         <div class="team-heading members-heading">
           <h3>Group members <span id="teamMemberCount" class="count"></span></h3>
@@ -285,19 +331,13 @@
               <h2 id="quickPunchTitle">Quick punch</h2>
               <p class="hint">The current time determines whether a punch is Morning or Afternoon.</p>
             </div>
-            <div class="time-sharing">
-              <label for="timeShareGroup">Sharing</label>
-              <select id="timeShareGroup">
-                <option value="">Private — only me</option>
-              </select>
-            </div>
           </div>
           <div class="quick-punch-actions">
             <button id="quickLogIn" type="button" class="primary">Quick Log In</button>
             <button id="quickLogOut" type="button" class="secondary">Quick Log Out</button>
           </div>
           <p id="timeRecordStatus" class="message" role="status" aria-live="polite"></p>
-          <p class="hint">Sharing is set by the first punch of each date. Quick punches won't replace an existing time; use manual entry to correct it.</p>
+          <p class="hint">Time records are private to your account. Quick punches won't replace an existing time; use manual entry to correct it.</p>
         </section>
 
         <section class="panel time-record-panel manual-time-panel" aria-labelledby="manualPunchTitle">
@@ -329,14 +369,37 @@
           <div id="timeRecordsTable" class="table-wrap"></div>
         </section>
       </section>
+
+      <section id="integrationsView" class="app-view" hidden>
+        <div class="storage-note">
+          <span class="storage-dot" aria-hidden="true"></span>
+          AI provider connections are not available yet.
+        </div>
+        <section class="panel integration-panel" aria-labelledby="integrationsTitle">
+          <div class="integration-heading">
+            <h2 id="integrationsTitle">AI integrations</h2>
+            <span class="development-badge">In development</span>
+          </div>
+          <p class="hint">API-key connections and secure key storage are planned for a future update. No keys are collected or saved yet.</p>
+          <label for="integrationApiKey">AI API key</label>
+          <input id="integrationApiKey" type="password" placeholder="Coming soon" disabled>
+          <button type="button" class="primary" disabled>Save API key</button>
+        </section>
+      </section>
     </div>
   </section>
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<div id="toastNotification" class="toast-notification" role="status" aria-live="polite" aria-atomic="true" hidden>
+  <span id="toastMessage"></span>
+  <button id="toastClose" type="button" aria-label="Close notification">×</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" crossorigin="anonymous"></script>
 <script src="js/supabase-config.js"></script>
 <script src="js/helpers.js"></script>
 <script src="js/state.js"></script>
+<script src="js/offline.js"></script>
 <script src="js/backend.js"></script>
 <script src="js/setup.js"></script>
 <script src="js/people.js"></script>
@@ -344,5 +407,6 @@
 <script src="js/time_records.js"></script>
 <script src="js/dashboard.js"></script>
 <script src="js/main.js"></script>
+<script src="js/pwa.js"></script>
 </body>
 </html>

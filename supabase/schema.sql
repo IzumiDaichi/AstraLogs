@@ -2,12 +2,33 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   email text not null,
   username text,
+  nickname text not null,
   full_name text not null check (length(trim(full_name)) > 0),
   department text not null check (length(trim(department)) > 0),
   created_at timestamptz not null default now()
 );
 
 alter table public.profiles add column if not exists username text;
+alter table public.profiles add column if not exists nickname text;
+update public.profiles
+set nickname = coalesce(nullif(trim(nickname), ''), nullif(trim(full_name), ''), username)
+where nickname is null or length(trim(nickname)) = 0;
+alter table public.profiles alter column nickname set not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.profiles'::regclass
+      and conname = 'profiles_nickname_not_blank'
+  ) then
+    alter table public.profiles
+      add constraint profiles_nickname_not_blank check (length(trim(nickname)) > 0);
+  end if;
+end
+$$;
+
 create unique index if not exists profiles_username_unique_idx
   on public.profiles (lower(username))
   where username is not null;
@@ -16,8 +37,71 @@ create table if not exists public.workspaces (
   id uuid primary key default gen_random_uuid(),
   name text not null check (length(trim(name)) > 0),
   owner_id uuid not null references auth.users (id),
+  invite_code text not null,
   created_at timestamptz not null default now()
 );
+
+alter table public.workspaces add column if not exists invite_code text;
+alter table public.workspaces
+  drop constraint if exists workspaces_invite_code_format;
+create or replace function public.generate_workspace_invite_code()
+returns text
+language sql
+volatile
+set search_path = public
+as $$
+  select string_agg(
+    substr('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', floor(random() * 36)::integer + 1, 1),
+    '' order by character_index
+  )
+  from generate_series(1, 5) as characters(character_index);
+$$;
+revoke all on function public.generate_workspace_invite_code() from public, anon, authenticated;
+
+do $$
+declare
+  workspace_row record;
+  candidate_code text;
+  attempt integer;
+begin
+  for workspace_row in
+    select id
+    from public.workspaces
+    where invite_code is null
+      or length(trim(invite_code)) <> 5
+      or invite_code !~ '^[A-Z0-9]{5}$'
+    order by id
+  loop
+    candidate_code := null;
+    for attempt in 1..100 loop
+      candidate_code := public.generate_workspace_invite_code();
+      exit when not exists (
+        select 1
+        from public.workspaces
+        where invite_code = candidate_code
+          and id <> workspace_row.id
+      );
+    end loop;
+    if exists (
+      select 1
+      from public.workspaces
+      where invite_code = candidate_code
+        and id <> workspace_row.id
+    ) then
+      raise exception 'Could not generate a unique group invite code.';
+    end if;
+    update public.workspaces
+    set invite_code = candidate_code
+    where id = workspace_row.id;
+  end loop;
+end
+$$;
+
+alter table public.workspaces alter column invite_code set not null;
+alter table public.workspaces
+  add constraint workspaces_invite_code_format check (invite_code ~ '^[A-Z0-9]{5}$');
+create unique index if not exists workspaces_invite_code_unique_idx
+  on public.workspaces (invite_code);
 
 create table if not exists public.workspace_memberships (
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
@@ -80,6 +164,21 @@ create unique index if not exists workspace_invites_one_pending_idx
   on public.workspace_invites (workspace_id, invitee_id)
   where status = 'pending';
 
+create table if not exists public.workspace_join_requests (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  requester_username text not null,
+  requester_nickname text not null,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
+  created_at timestamptz not null default now(),
+  responded_at timestamptz
+);
+
+create unique index if not exists workspace_join_requests_one_pending_idx
+  on public.workspace_join_requests (workspace_id, user_id)
+  where status = 'pending';
+
 create table if not exists public.logbooks (
   id uuid primary key default gen_random_uuid(),
   name text not null check (length(trim(name)) > 0),
@@ -99,6 +198,7 @@ create table if not exists public.accomplishments (
   submitted_by uuid not null references public.profiles (id),
   workspace_id uuid references public.workspaces (id),
   logbook_id uuid references public.logbooks (id) on delete cascade,
+  shared_with uuid[],
   log_date date not null,
   time_request time,
   time_completion time,
@@ -126,7 +226,11 @@ alter table public.accomplishments
   add column if not exists workspace_id uuid references public.workspaces (id);
 alter table public.accomplishments
   add column if not exists logbook_id uuid references public.logbooks (id) on delete cascade;
+alter table public.accomplishments
+  add column if not exists shared_with uuid[];
 alter table public.accomplishments alter column workspace_id drop not null;
+alter table public.time_records
+  add column if not exists workspace_id uuid references public.workspaces (id) on delete set null;
 
 insert into public.logbooks (name, owner_id, workspace_id)
 select workspace_row.name, workspace_row.owner_id, workspace_row.id
@@ -174,13 +278,14 @@ create index if not exists accomplishments_logbook_date_idx
   on public.accomplishments (logbook_id, log_date desc);
 create index if not exists time_records_user_date_idx
   on public.time_records (user_id, work_date desc);
-create index if not exists time_records_workspace_date_idx
-  on public.time_records (workspace_id, work_date desc);
+drop index if exists public.time_records_workspace_date_idx;
+update public.time_records set workspace_id = null where workspace_id is not null;
 
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_memberships enable row level security;
 alter table public.workspace_invites enable row level security;
+alter table public.workspace_join_requests enable row level security;
 alter table public.logbooks enable row level security;
 alter table public.accomplishments enable row level security;
 alter table public.time_records enable row level security;
@@ -244,6 +349,42 @@ as $$
   );
 $$;
 
+create or replace function public.can_view_shared_logbook(target_logbook uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.accomplishments accomplishment_row
+    where accomplishment_row.logbook_id = target_logbook
+      and auth.uid() = any(coalesce(accomplishment_row.shared_with, array[]::uuid[]))
+  );
+$$;
+
+create or replace function public.can_share_with_users(target_owner uuid, target_users uuid[])
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(bool_and(
+    target_user = target_owner
+    or exists (
+      select 1
+      from public.workspace_memberships owner_membership
+      join public.workspace_memberships theirs
+        on theirs.workspace_id = owner_membership.workspace_id
+      where owner_membership.user_id = target_owner
+        and theirs.user_id = target_user
+    )
+  ), true)
+  from unnest(coalesce(target_users, array[]::uuid[])) as users(target_user);
+$$;
+
 create or replace function public.create_workspace(workspace_name text)
 returns uuid
 language plpgsql
@@ -253,6 +394,8 @@ as $$
 declare
   caller uuid := auth.uid();
   new_workspace uuid;
+  candidate_code text;
+  attempt integer;
 begin
   if caller is null then
     raise exception 'Sign in is required.';
@@ -261,9 +404,21 @@ begin
     raise exception 'Create your profile before starting a group.';
   end if;
 
-  insert into public.workspaces (name, owner_id)
-  values (coalesce(nullif(trim(workspace_name), ''), 'New group'), caller)
-  returning id into new_workspace;
+  for attempt in 1..100 loop
+    candidate_code := public.generate_workspace_invite_code();
+    insert into public.workspaces (name, owner_id, invite_code)
+    values (
+      coalesce(nullif(trim(workspace_name), ''), 'New group'),
+      caller,
+      candidate_code
+    )
+    on conflict (invite_code) do nothing
+    returning id into new_workspace;
+    exit when new_workspace is not null;
+  end loop;
+  if new_workspace is null then
+    raise exception 'Could not generate a unique group invite code.';
+  end if;
 
   insert into public.workspace_memberships (workspace_id, user_id, role)
   values (new_workspace, caller, 'owner');
@@ -303,11 +458,11 @@ begin
 end;
 $$;
 
+drop function if exists public.record_time_punch(date, text, timestamptz, uuid, boolean);
 create or replace function public.record_time_punch(
   target_date date,
   punch_slot text,
   punched_at timestamptz,
-  target_workspace uuid,
   allow_correction boolean default false
 )
 returns boolean
@@ -330,18 +485,13 @@ begin
   if punched_at is null then
     raise exception 'A punch time is required.';
   end if;
-  if target_workspace is not null
-    and not public.is_workspace_member_of(target_workspace) then
-    raise exception 'Join that group before sharing a time record with it.';
-  end if;
-
   insert into public.time_records (
     user_id, workspace_id, work_date,
     morning_in, morning_out, afternoon_in, afternoon_out
   )
   values (
     caller,
-    target_workspace,
+    null,
     target_date,
     case when punch_slot = 'morning_in' then punched_at end,
     case when punch_slot = 'morning_out' then punched_at end,
@@ -447,6 +597,151 @@ begin
     insert into public.workspace_memberships (workspace_id, user_id, role)
     values (invite_row.workspace_id, auth.uid(), 'member')
     on conflict (workspace_id, user_id) do nothing;
+
+    update public.workspace_join_requests
+    set status = 'accepted',
+        responded_at = now()
+    where workspace_id = invite_row.workspace_id
+      and user_id = auth.uid()
+      and status = 'pending';
+  end if;
+  return true;
+end;
+$$;
+
+create or replace function public.request_to_join_workspace(target_invite_code text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  caller uuid := auth.uid();
+  target_workspace uuid;
+  requester_name text;
+  requester_nickname text;
+  request_id uuid;
+begin
+  if caller is null then
+    raise exception 'Sign in is required.';
+  end if;
+  if target_invite_code is null or upper(trim(target_invite_code)) !~ '^[A-Z0-9]{5}$' then
+    raise exception 'That invite code is not valid.';
+  end if;
+
+  select id into target_workspace
+  from public.workspaces
+  where invite_code = upper(trim(target_invite_code));
+  if target_workspace is null then
+    raise exception 'That invite code is not valid.';
+  end if;
+  if exists (
+    select 1 from public.workspace_memberships
+    where workspace_id = target_workspace and user_id = caller
+  ) then
+    raise exception 'You are already a member of this group.';
+  end if;
+  if exists (
+    select 1 from public.workspace_join_requests
+    where workspace_id = target_workspace and user_id = caller and status = 'pending'
+  ) then
+    raise exception 'Your request to join this group is already pending.';
+  end if;
+
+  select username, nickname
+  into requester_name, requester_nickname
+  from public.profiles
+  where id = caller;
+  if requester_name is null then
+    raise exception 'Create your profile before requesting to join a group.';
+  end if;
+
+  insert into public.workspace_join_requests (
+    workspace_id, user_id, requester_username, requester_nickname
+  )
+  values (target_workspace, caller, requester_name, requester_nickname)
+  returning id into request_id;
+
+  return request_id;
+end;
+$$;
+
+create or replace function public.respond_to_workspace_join_request(
+  target_request uuid,
+  approve_request boolean
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  request_row public.workspace_join_requests%rowtype;
+begin
+  select * into request_row
+  from public.workspace_join_requests
+  where id = target_request and status = 'pending'
+  for update;
+  if not found then
+    raise exception 'Join request not found or already handled.';
+  end if;
+  if not exists (
+    select 1 from public.workspaces
+    where id = request_row.workspace_id and owner_id = auth.uid()
+  ) then
+    raise exception 'Only the group owner can respond to join requests.';
+  end if;
+
+  update public.workspace_join_requests
+  set status = case when approve_request then 'accepted' else 'declined' end,
+      responded_at = now()
+  where id = request_row.id;
+
+  if approve_request then
+    insert into public.workspace_memberships (workspace_id, user_id, role)
+    values (request_row.workspace_id, request_row.user_id, 'member')
+    on conflict (workspace_id, user_id) do nothing;
+  end if;
+  return true;
+end;
+$$;
+
+create or replace function public.remove_workspace_member(
+  target_workspace uuid,
+  target_user uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  removed_user uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Sign in is required.';
+  end if;
+  if target_user is null or target_user = auth.uid() then
+    raise exception 'The group owner cannot remove themselves.';
+  end if;
+  if not exists (
+    select 1 from public.workspaces
+    where id = target_workspace and owner_id = auth.uid()
+  ) then
+    raise exception 'Only the group owner can remove members.';
+  end if;
+
+  delete from public.workspace_memberships
+  where workspace_id = target_workspace
+    and user_id = target_user
+    and role <> 'owner'
+    and user_id <> (
+      select owner_id from public.workspaces where id = target_workspace
+    )
+  returning user_id into removed_user;
+
+  if removed_user is null then
+    raise exception 'Member not found or cannot be removed.';
   end if;
   return true;
 end;
@@ -455,19 +750,29 @@ $$;
 revoke all on function public.is_workspace_member_of(uuid) from public;
 revoke all on function public.can_view_profile(uuid) from public;
 revoke all on function public.can_access_logbook(uuid) from public;
+revoke all on function public.can_view_shared_logbook(uuid) from public;
+revoke all on function public.can_share_with_users(uuid, uuid[]) from public;
 revoke all on function public.create_workspace(text) from public;
 revoke all on function public.create_logbook(text, uuid) from public;
-revoke all on function public.record_time_punch(date, text, timestamptz, uuid, boolean) from public;
+revoke all on function public.record_time_punch(date, text, timestamptz, boolean) from public;
 revoke all on function public.invite_user_to_workspace(text, uuid) from public;
 revoke all on function public.respond_to_workspace_invite(uuid, boolean) from public;
+revoke all on function public.request_to_join_workspace(text) from public;
+revoke all on function public.respond_to_workspace_join_request(uuid, boolean) from public;
+revoke all on function public.remove_workspace_member(uuid, uuid) from public;
 grant execute on function public.is_workspace_member_of(uuid) to authenticated;
 grant execute on function public.can_view_profile(uuid) to authenticated;
 grant execute on function public.can_access_logbook(uuid) to authenticated;
+grant execute on function public.can_view_shared_logbook(uuid) to authenticated;
+grant execute on function public.can_share_with_users(uuid, uuid[]) to authenticated;
 grant execute on function public.create_workspace(text) to authenticated;
 grant execute on function public.create_logbook(text, uuid) to authenticated;
-grant execute on function public.record_time_punch(date, text, timestamptz, uuid, boolean) to authenticated;
+grant execute on function public.record_time_punch(date, text, timestamptz, boolean) to authenticated;
 grant execute on function public.invite_user_to_workspace(text, uuid) to authenticated;
 grant execute on function public.respond_to_workspace_invite(uuid, boolean) to authenticated;
+grant execute on function public.request_to_join_workspace(text) to authenticated;
+grant execute on function public.respond_to_workspace_join_request(uuid, boolean) to authenticated;
+grant execute on function public.remove_workspace_member(uuid, uuid) to authenticated;
 
 drop policy if exists "Team can view profiles" on public.profiles;
 drop policy if exists "Users can view their own or group profiles" on public.profiles;
@@ -527,11 +832,27 @@ create policy "Users can view their group invitations"
     or public.is_workspace_member_of(workspace_id)
   );
 
+drop policy if exists "Group owners can view join requests" on public.workspace_join_requests;
+create policy "Group owners can view join requests"
+  on public.workspace_join_requests for select
+  to authenticated
+  using (
+    exists (
+      select 1
+      from public.workspaces
+      where workspaces.id = workspace_join_requests.workspace_id
+        and workspaces.owner_id = auth.uid()
+    )
+  );
+
 drop policy if exists "Owners and group members can view logbooks" on public.logbooks;
 create policy "Owners and group members can view logbooks"
   on public.logbooks for select
   to authenticated
-  using (public.can_access_logbook(id));
+  using (
+    public.can_access_logbook(id)
+    or public.can_view_shared_logbook(id)
+  );
 
 drop policy if exists "Owners can create logbooks" on public.logbooks;
 create policy "Owners can create logbooks"
@@ -570,7 +891,11 @@ drop policy if exists "Logbook owners and group can view accomplishments" on pub
 create policy "Logbook owners and group can view accomplishments"
   on public.accomplishments for select
   to authenticated
-  using (public.can_access_logbook(logbook_id));
+  using (
+    submitted_by = auth.uid()
+    or auth.uid() = any(coalesce(shared_with, array[]::uuid[]))
+    or (shared_with is null and public.can_access_logbook(logbook_id))
+  );
 
 drop policy if exists "Users can submit accomplishments as themselves" on public.accomplishments;
 drop policy if exists "Members can submit accomplishments as themselves" on public.accomplishments;
@@ -581,6 +906,8 @@ create policy "Logbook owners and group can add accomplishments"
   with check (
     submitted_by = auth.uid()
     and public.can_access_logbook(logbook_id)
+    and shared_with is not null
+    and public.can_share_with_users(submitted_by, shared_with)
   );
 
 drop policy if exists "Authors can delete their own group accomplishments" on public.accomplishments;
@@ -588,23 +915,35 @@ drop policy if exists "Logbook owners and group can edit accomplishments" on pub
 create policy "Logbook owners and group can edit accomplishments"
   on public.accomplishments for update
   to authenticated
-  using (public.can_access_logbook(logbook_id))
-  with check (public.can_access_logbook(logbook_id));
+  using (
+    submitted_by = auth.uid()
+    or auth.uid() = any(coalesce(shared_with, array[]::uuid[]))
+    or (shared_with is null and public.can_access_logbook(logbook_id))
+  )
+  with check (
+    (
+      submitted_by = auth.uid()
+      or auth.uid() = any(coalesce(shared_with, array[]::uuid[]))
+      or (shared_with is null and public.can_access_logbook(logbook_id))
+    )
+  );
 
 drop policy if exists "Logbook owners and group can delete accomplishments" on public.accomplishments;
 create policy "Logbook owners and group can delete accomplishments"
   on public.accomplishments for delete
   to authenticated
-  using (public.can_access_logbook(logbook_id));
+  using (
+    submitted_by = auth.uid()
+    or auth.uid() = any(coalesce(shared_with, array[]::uuid[]))
+    or (shared_with is null and public.can_access_logbook(logbook_id))
+  );
 
 drop policy if exists "Users can view own or shared time records" on public.time_records;
-create policy "Users can view own or shared time records"
+drop policy if exists "Users can view own time records" on public.time_records;
+create policy "Users can view own time records"
   on public.time_records for select
   to authenticated
-  using (
-    user_id = auth.uid()
-    or (workspace_id is not null and public.is_workspace_member_of(workspace_id))
-  );
+  using (user_id = auth.uid());
 
 drop policy if exists "Users can add own time records" on public.time_records;
 create policy "Users can add own time records"
@@ -612,7 +951,7 @@ create policy "Users can add own time records"
   to authenticated
   with check (
     user_id = auth.uid()
-    and (workspace_id is null or public.is_workspace_member_of(workspace_id))
+    and workspace_id is null
   );
 
 drop policy if exists "Users can update own time records" on public.time_records;
@@ -622,19 +961,28 @@ create policy "Users can update own time records"
   using (user_id = auth.uid())
   with check (
     user_id = auth.uid()
-    and (workspace_id is null or public.is_workspace_member_of(workspace_id))
+    and workspace_id is null
   );
+
+drop policy if exists "Users can delete own time records" on public.time_records;
+create policy "Users can delete own time records"
+  on public.time_records for delete
+  to authenticated
+  using (user_id = auth.uid());
 
 grant usage on schema public to authenticated;
 grant select, insert, update on public.profiles to authenticated;
-grant select on public.workspaces, public.workspace_memberships, public.workspace_invites to authenticated;
+grant select on public.workspaces, public.workspace_memberships, public.workspace_invites,
+  public.workspace_join_requests to authenticated;
 grant select, insert, update, delete on public.logbooks to authenticated;
 grant select, insert, delete on public.accomplishments to authenticated;
-grant select, insert, update on public.time_records to authenticated;
+grant select, insert, update, delete on public.time_records to authenticated;
+revoke update (shared_with) on public.accomplishments from authenticated;
 grant update (log_date, time_request, time_completion, interns, department, task, notes)
   on public.accomplishments to authenticated;
 revoke all on public.profiles, public.workspaces, public.workspace_memberships,
-  public.workspace_invites, public.logbooks, public.accomplishments, public.time_records from anon;
+  public.workspace_invites, public.workspace_join_requests, public.logbooks,
+  public.accomplishments, public.time_records from anon;
 
 drop function if exists public.bootstrap_workspace(text);
 drop function if exists public.is_workspace_member();

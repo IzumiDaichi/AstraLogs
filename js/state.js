@@ -11,6 +11,6 @@ var logbooks = [];
 var activeLogbook = null;
 var receivedInvites = [];
 var sentInvites = [];
+var workspaceJoinRequests = [];
 var timeRecords = [];
-var timeShareWorkspaceId = "";
 var recentDashboardAccomplishments = [];

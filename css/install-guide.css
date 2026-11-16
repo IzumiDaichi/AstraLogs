@@ -1,0 +1,26 @@
+.ios-guide { max-width: 900px; }
+.ios-guide-back { display: inline-block; margin-bottom: 20px; color: var(--cyan); font-weight: 700; text-decoration: none; }
+.ios-guide-back:hover { text-decoration: underline; }
+.ios-guide-header { margin-bottom: 20px; }
+.ios-guide-header .sub { margin: 8px 0 16px; }
+.ios-guide-note, .ios-guide-help { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.ios-guide-note { margin: 0; color: #d7def4; }
+.ios-guide-steps { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.ios-guide-step { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 360px); align-items: center; gap: 20px; padding: clamp(16px, 3vw, 26px); border: 1px solid var(--line); border-radius: 15px; background: var(--card); box-shadow: var(--shadow); }
+.ios-guide-copy { min-width: 0; }
+.ios-step-number { display: inline-block; margin-bottom: 8px; color: var(--cyan); font-size: .75rem; font-weight: 800; letter-spacing: .12em; }
+.ios-guide-copy h2, .ios-guide-help h2 { margin: 0 0 8px; font-size: 1.15rem; }
+.ios-guide-copy p, .ios-guide-help p { margin: 0; color: #d7def4; }
+.ios-guide-copy a { color: var(--cyan); overflow-wrap: anywhere; }
+.ios-guide-step figure { width: 100%; max-width: 330px; margin: 0 auto; }
+.ios-guide-step img { display: block; width: 100%; height: auto; border: 1px solid #39466e; border-radius: 24px; background: #e8ebf3; }
+.ios-guide-step figcaption { margin-top: 7px; color: var(--muted); font-size: .75rem; text-align: center; }
+.ios-guide-help { margin-top: 18px; }
+.ios-guide-help p { margin-bottom: 14px; }
+.ios-guide-disclaimer { margin: 16px 0 0; color: var(--muted); font-size: .8rem; text-align: center; }
+
+@media (max-width: 620px) {
+  .ios-guide { padding-top: max(14px, env(safe-area-inset-top)); }
+  .ios-guide-step { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .ios-guide-step figure { max-width: 300px; }
+}

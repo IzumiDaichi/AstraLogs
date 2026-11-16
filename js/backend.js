@@ -39,7 +39,7 @@ async function loadTeamMembers(workspaceId) {
   }
   var result = await supabaseClient
     .from("workspace_memberships")
-    .select("user_id, role, profiles(id, username, full_name, department)")
+    .select("user_id, role, profiles(id, username, nickname, department)")
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: true });
   if (result.error) throw result.error;
@@ -48,7 +48,7 @@ async function loadTeamMembers(workspaceId) {
     return {
       id: member.id,
       username: member.username,
-      full_name: member.full_name,
+      nickname: member.nickname,
       department: member.department,
       role: membership.role
     };
@@ -58,14 +58,15 @@ async function loadTeamMembers(workspaceId) {
 
 async function loadEntryMembers() {
   entryMembers = [];
-  if (!activeLogbook || !activeLogbook.workspace_id) {
+  var workspaceIds = groups.map(function (group) { return group.id; });
+  if (!workspaceIds.length) {
     renderPeople();
     return;
   }
   var result = await supabaseClient
     .from("workspace_memberships")
-    .select("user_id, profiles(id, username, full_name, department)")
-    .eq("workspace_id", activeLogbook.workspace_id)
+    .select("user_id, profiles(id, username, nickname, department)")
+    .in("workspace_id", workspaceIds)
     .order("created_at", { ascending: true });
   if (result.error) throw result.error;
   entryMembers = uniqueById((result.data || []).map(function (membership) {
@@ -103,7 +104,7 @@ async function loadAccomplishments() {
 async function loadWorkspaceData() {
   var membershipResult = await supabaseClient
     .from("workspace_memberships")
-    .select("workspace_id, role, workspaces(id, name, owner_id)")
+    .select("workspace_id, role, workspaces(id, name, owner_id, invite_code)")
     .eq("user_id", currentUser.id)
     .order("created_at", { ascending: true });
   if (membershipResult.error) throw membershipResult.error;
@@ -112,6 +113,7 @@ async function loadWorkspaceData() {
       id: membership.workspaces.id,
       name: membership.workspaces.name,
       owner_id: membership.workspaces.owner_id,
+      invite_code: membership.workspaces.invite_code,
       role: membership.role
     };
   }));
@@ -129,12 +131,45 @@ async function loadWorkspaceData() {
   receivedInvites = uniqueById(incoming.data || []);
 
   await loadSentInvites();
+  await loadJoinRequests(selectedWorkspaceId);
   await loadTeamMembers(selectedWorkspaceId);
   renderGroupSelectors();
   renderTeam();
   await loadLogbooks();
   await loadTimeRecords();
   await loadDashboardData();
+  await cacheOfflineWorkspaceSnapshot();
+}
+
+async function cacheOfflineWorkspaceSnapshot() {
+  if (!currentUser || !profile) return;
+  var snapshot = {
+    profile: {
+      id: profile.id,
+      username: profile.username,
+      nickname: profile.nickname,
+      myDept: profile.myDept,
+      formTitle: profile.formTitle
+    },
+    groups: groups,
+    selectedWorkspaceId: selectedWorkspaceId,
+    teamMembers: teamMembers,
+    entryMembers: entryMembers,
+    receivedInvites: receivedInvites,
+    sentInvites: sentInvites,
+    workspaceJoinRequests: workspaceJoinRequests,
+    logbooks: logbooks,
+    activeLogbookId: activeLogbook ? activeLogbook.id : null,
+    accomplishments: accomplishments,
+    timeRecords: timeRecords,
+    recentDashboardAccomplishments: recentDashboardAccomplishments
+  };
+  try {
+    await saveOfflineSnapshot(currentUser.id, snapshot);
+  } catch (error) {
+    console.error("Could not cache AstraLogs data for offline use.", error);
+    showToast("Your online data loaded, but it could not be cached for offline use. " + error.message, "err");
+  }
 }
 
 async function loadSentInvites() {
@@ -148,6 +183,21 @@ async function loadSentInvites() {
     .order("created_at", { ascending: false });
   if (outgoing.error) throw outgoing.error;
   sentInvites = uniqueById(outgoing.data || []);
+}
+
+async function loadJoinRequests(workspaceId) {
+  workspaceJoinRequests = [];
+  var group = groups.find(function (item) { return item.id === workspaceId; });
+  if (!group || group.owner_id !== currentUser.id) return;
+
+  var result = await supabaseClient
+    .from("workspace_join_requests")
+    .select("id, workspace_id, user_id, requester_username, requester_nickname, created_at")
+    .eq("workspace_id", workspaceId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+  if (result.error) throw result.error;
+  workspaceJoinRequests = uniqueById(result.data || []);
 }
 
 async function loadLogbooks(preferredLogbookId) {
@@ -172,7 +222,7 @@ async function loadLogbooks(preferredLogbookId) {
 
 async function selectLogbook(logbookId) {
   activeLogbook = logbooks.find(function (logbook) { return logbook.id === logbookId; }) || null;
-  selected = [profile.myName];
+  selected = [currentUser.id];
   renderLogbookSelectors();
   await loadEntryMembers();
   await loadAccomplishments();
@@ -181,6 +231,7 @@ async function selectLogbook(logbookId) {
 async function selectTeamGroup(workspaceId) {
   selectedWorkspaceId = workspaceId || null;
   await loadSentInvites();
+  await loadJoinRequests(selectedWorkspaceId);
   await loadTeamMembers(selectedWorkspaceId);
   renderGroupSelectors();
   renderTeam();
@@ -193,7 +244,7 @@ async function createLogbook(name, workspaceId) {
   });
   if (result.error) throw result.error;
   if (!result.data) throw new Error("The database did not return the new collection ID.");
-  selected = [profile.myName];
+  selected = [currentUser.id];
   await loadLogbooks(result.data);
   activeLogbook = logbooks.find(function (logbook) { return logbook.id === result.data; }) || null;
   if (!activeLogbook) {
@@ -201,9 +252,88 @@ async function createLogbook(name, workspaceId) {
   }
 }
 
+async function updateLogbook(logbookId, name) {
+  var result = await supabaseClient
+    .from("logbooks")
+    .update({ name: name })
+    .eq("id", logbookId)
+    .eq("owner_id", currentUser.id)
+    .select("id")
+    .maybeSingle();
+  if (result.error) throw result.error;
+  if (!result.data) throw new Error("Collection not found or you do not own it.");
+}
+
+async function deleteLogbook(logbookId) {
+  var result = await supabaseClient
+    .from("logbooks")
+    .delete()
+    .eq("id", logbookId)
+    .eq("owner_id", currentUser.id)
+    .select("id")
+    .maybeSingle();
+  if (result.error) throw result.error;
+  if (!result.data) throw new Error("Collection not found or you do not own it.");
+}
+
+async function updateTimeRecord(recordId, changes) {
+  var result = await supabaseClient
+    .from("time_records")
+    .update(changes)
+    .eq("id", recordId)
+    .eq("user_id", currentUser.id)
+    .select("id")
+    .maybeSingle();
+  if (result.error) throw result.error;
+  if (!result.data) throw new Error("Time record not found.");
+}
+
+async function deleteTimeRecord(recordId) {
+  var existing = await supabaseClient
+    .from("time_records")
+    .select("id")
+    .eq("id", recordId)
+    .eq("user_id", currentUser.id)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (!existing.data) throw new Error("Time record not found or you do not own it.");
+
+  var result = await supabaseClient
+    .from("time_records")
+    .delete()
+    .eq("id", recordId)
+    .eq("user_id", currentUser.id)
+    .select("id")
+    .maybeSingle();
+  if (result.error) {
+    if (result.error.code === "42501") {
+      throw new Error("Supabase is missing delete permission. Apply the latest supabase/schema.sql.");
+    }
+    throw result.error;
+  }
+  if (!result.data) {
+    throw new Error("Supabase blocked the delete. Apply the latest supabase/schema.sql to enable owner-only deletion.");
+  }
+}
+
 async function saveAccomplishment(payload) {
   var result = await supabaseClient.from("accomplishments").insert(payload);
   if (result.error) throw result.error;
+}
+
+async function syncOfflineAccomplishment(payload) {
+  var result = await supabaseClient.from("accomplishments").insert(payload);
+  if (!result.error) return;
+  if (result.error.code !== "23505") throw result.error;
+
+  var existing = await supabaseClient
+    .from("accomplishments")
+    .select("id")
+    .eq("id", payload.id)
+    .eq("submitted_by", currentUser.id)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (!existing.data) throw result.error;
 }
 
 async function updateAccomplishment(id, changes) {
@@ -229,6 +359,31 @@ async function respondToWorkspaceInvite(inviteId, accept) {
     accept_invite: accept
   });
   if (result.error) throw result.error;
+}
+
+async function requestToJoinWorkspace(inviteCode) {
+  var result = await supabaseClient.rpc("request_to_join_workspace", {
+    target_invite_code: inviteCode
+  });
+  if (result.error) throw result.error;
+  if (!result.data) throw new Error("The database did not create a join request.");
+}
+
+async function respondToWorkspaceJoinRequest(requestId, approve) {
+  var result = await supabaseClient.rpc("respond_to_workspace_join_request", {
+    target_request: requestId,
+    approve_request: approve
+  });
+  if (result.error) throw result.error;
+}
+
+async function removeWorkspaceMember(workspaceId, userId) {
+  var result = await supabaseClient.rpc("remove_workspace_member", {
+    target_workspace: workspaceId,
+    target_user: userId
+  });
+  if (result.error) throw result.error;
+  if (!result.data) throw new Error("The database did not remove the group member.");
 }
 
 async function createWorkspace(name) {

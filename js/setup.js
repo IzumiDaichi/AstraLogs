@@ -15,6 +15,7 @@ function showLogin() {
   $("authDescription").hidden = false;
   $("loginForm").querySelector("button[type=submit]").disabled = !isSupabaseConfigured();
   $("loginPassword").value = "";
+  $("registerNickname").value = "";
   setAuthStatus("");
 }
 
@@ -25,22 +26,29 @@ function showProfileForm() {
   $("profileForm").hidden = false;
   $("authTitle").textContent = "Edit your profile";
   $("authDescription").hidden = true;
-  $("myName").value = profile ? profile.myName : "";
+  $("myNickname").value = profile ? profile.nickname : "";
   $("myDept").value = profile ? profile.myDept : "";
   $("registrationNotice").hidden = true;
   $("cancelProfile").hidden = false;
   $("setupStatus").textContent = "";
-  $("myName").focus();
+  $("myNickname").focus();
 }
 
 async function loadProfileForUser(user) {
   currentUser = user;
-  var result = await supabaseClient
-    .from("profiles")
-    .select("id, email, username, full_name, department")
-    .eq("id", user.id)
-    .maybeSingle();
+  var result;
+  try {
+    result = await supabaseClient
+      .from("profiles")
+      .select("id, email, username, nickname, full_name, department")
+      .eq("id", user.id)
+      .maybeSingle();
+  } catch (error) {
+    if (await restoreOfflineSession(user, error)) return;
+    throw error;
+  }
   if (result.error) {
+    if (await restoreOfflineSession(user, result.error)) return;
     showLogin();
     setAuthStatus("Could not load your profile. Check the Supabase schema and access policies. " + result.error.message, "err");
     return;
@@ -53,6 +61,7 @@ async function loadProfileForUser(user) {
       id: user.id,
       email: user.email,
       username: accountName,
+      nickname: result.data ? result.data.nickname || result.data.full_name : accountName,
       full_name: result.data ? result.data.full_name : accountName,
       department: result.data ? result.data.department : "Unspecified"
     }, { onConflict: "id" });
@@ -62,31 +71,87 @@ async function loadProfileForUser(user) {
     id: user.id,
     email: user.email,
     username: accountName,
-    myName: result.data ? result.data.full_name : accountName,
+    nickname: result.data ? result.data.nickname || result.data.full_name : accountName,
     myDept: result.data ? result.data.department : "Unspecified",
     formTitle: SUPABASE_CONFIG.formTitle || "AstraLogs"
   };
   await showApp();
 }
 
-async function showApp() {
+async function restoreOfflineSession(user, error) {
+  if (!isNetworkUnavailable(error)) return false;
+  var snapshot = await getOfflineSnapshot(user.id);
+  if (!snapshot || !snapshot.profile) return false;
+  profile = snapshot.profile;
+  await showApp(snapshot);
+  setWorkspaceStatus("Offline mode. Showing your last saved workspace data.");
+  return true;
+}
+
+function restoreOfflineWorkspace(snapshot) {
+  profile = snapshot.profile || profile;
+  groups = snapshot.groups || [];
+  selectedWorkspaceId = snapshot.selectedWorkspaceId || null;
+  teamMembers = snapshot.teamMembers || [];
+  entryMembers = snapshot.entryMembers || [];
+  receivedInvites = snapshot.receivedInvites || [];
+  sentInvites = snapshot.sentInvites || [];
+  workspaceJoinRequests = snapshot.workspaceJoinRequests || [];
+  logbooks = snapshot.logbooks || [];
+  activeLogbook = logbooks.find(function (logbook) {
+    return logbook.id === snapshot.activeLogbookId;
+  }) || (logbooks.length ? logbooks[0] : null);
+  accomplishments = snapshot.accomplishments || [];
+  timeRecords = snapshot.timeRecords || [];
+  recentDashboardAccomplishments = snapshot.recentDashboardAccomplishments || [];
+  selected = [currentUser.id];
+  renderGroupSelectors();
+  renderTeam();
+  renderLogbookSelectors();
+  renderPeople();
+  renderHistory();
+  renderTimeRecords();
+  renderDashboard();
+}
+
+async function showApp(offlineSnapshot) {
   $("setup").hidden = true;
   $("app").hidden = false;
   $("titleText").textContent = "AstraLogs";
-  $("submitterName").textContent = profile.myName;
-  $("userAvatar").textContent = profile.myName.trim().charAt(0).toUpperCase();
+  $("submitterName").textContent = profile.nickname;
+  $("sidebarUsername").textContent = "@" + profile.username;
+  $("userAvatar").textContent = profile.nickname.trim().charAt(0).toUpperCase();
   document.title = "AstraLogs";
   if (!$("filterDay").value) $("filterDay").value = todayString();
   if (!$("filterWeek").value) $("filterWeek").value = todayString();
   if (!$("filterFrom").value) $("filterFrom").value = todayString();
   if (!$("filterTo").value) $("filterTo").value = todayString();
   setDateToToday();
-  selected = [profile.myName];
+  selected = [currentUser.id];
   renderPeople();
   renderHistory();
   setActiveView("dashboard");
   setWorkspaceStatus("");
-  await loadWorkspaceData();
+  try {
+    await loadWorkspaceData();
+  } catch (error) {
+    if (!isNetworkUnavailable(error)) throw error;
+    var snapshot = offlineSnapshot || await getOfflineSnapshot(currentUser.id);
+    if (!snapshot || !snapshot.profile) {
+      throw new Error("You need to open AstraLogs online once before it can save records offline.");
+    }
+    restoreOfflineWorkspace(snapshot);
+    setWorkspaceStatus("Offline mode. Showing your last saved workspace data.");
+  }
+  await updateOfflineStatus();
+  if (window.navigator.onLine !== false) {
+    try {
+      await syncOfflineActions(true);
+    } catch (error) {
+      console.error("Could not sync saved offline records.", error);
+      showToast("Saved offline records could not sync. " + error.message, "err");
+    }
+  }
 }
 
 async function initializeAuth() {
@@ -129,11 +194,13 @@ function updateAuthMode() {
   var registering = authMode === "register";
   $("authTitle").textContent = registering ? "Create your account" : "Sign in to your log";
   $("authDescription").textContent = registering
-    ? "Choose a username and password to join the shared accomplishment log."
+    ? "Choose a username for login, a nickname shown on entries, and a password."
     : "Sign in with your username and password.";
   $("loginUsername").autocomplete = registering ? "username" : "username";
   $("loginPassword").autocomplete = registering ? "new-password" : "current-password";
   $("loginPassword").minLength = registering ? 8 : 0;
+  $("registerNicknameField").hidden = !registering;
+  $("registerNickname").required = registering;
   $("confirmPasswordField").hidden = !registering;
   $("confirmPassword").required = registering;
   $("confirmPassword").value = "";
@@ -155,6 +222,12 @@ $("loginForm").addEventListener("submit", async function (event) {
   }
   var password = $("loginPassword").value;
   if (authMode === "register") {
+    var nickname = $("registerNickname").value.trim();
+    if (!nickname) {
+      setAuthStatus("Enter a nickname.", "err");
+      $("registerNickname").focus();
+      return;
+    }
     if (password.length < 8) {
       setAuthStatus("Password must be at least 8 characters.", "err");
       return;
@@ -187,7 +260,8 @@ $("loginForm").addEventListener("submit", async function (event) {
       id: currentUser.id,
       email: currentUser.email,
       username: username,
-      full_name: username,
+      nickname: nickname,
+      full_name: nickname,
       department: "Unspecified"
     });
     if (newProfile.error) {
@@ -199,14 +273,16 @@ $("loginForm").addEventListener("submit", async function (event) {
       id: currentUser.id,
       email: currentUser.email,
       username: username,
-      myName: username,
+      nickname: nickname,
       myDept: "Unspecified",
       formTitle: SUPABASE_CONFIG.formTitle || "AstraLogs"
     };
     $("loginPassword").value = "";
     $("confirmPassword").value = "";
+    $("registerNickname").value = "";
     try {
       await showApp();
+      showToast("Account created.");
     } catch (error) {
       setWorkspaceStatus("Account created, but your logbooks and groups could not be loaded. " + error.message, "err");
     }
@@ -244,13 +320,19 @@ $("profileForm").addEventListener("submit", async function (event) {
     showLogin();
     return;
   }
-  var name = $("myName").value.trim();
+  var nickname = $("myNickname").value.trim();
   var department = $("myDept").value.trim();
+  if (!nickname) {
+    setAuthStatus("Enter a nickname.", "err");
+    $("myNickname").focus();
+    return;
+  }
   var result = await supabaseClient.from("profiles").upsert({
     id: currentUser.id,
     email: currentUser.email,
     username: profile.username,
-    full_name: name,
+    nickname: nickname,
+    full_name: nickname,
     department: department
   }, { onConflict: "id" });
   if (result.error) {
@@ -261,12 +343,13 @@ $("profileForm").addEventListener("submit", async function (event) {
     id: currentUser.id,
     email: currentUser.email,
     username: profile.username,
-    myName: name,
+    nickname: nickname,
     myDept: department,
     formTitle: SUPABASE_CONFIG.formTitle || "AstraLogs"
   };
   try {
     await showApp();
+    showToast("Profile updated.");
   } catch (error) {
     setWorkspaceStatus("Profile saved, but your logbooks and groups could not be loaded. " + error.message, "err");
   }

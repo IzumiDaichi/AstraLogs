@@ -13,14 +13,20 @@ function setDateToToday() {
 }
 
 function buildPayload() {
+  var selectedMembers = selected.map(function (userId) {
+    return entryMembers.find(function (member) { return member.id === userId; }) ||
+      (userId === currentUser.id ? { id: currentUser.id, nickname: profile.nickname } : null);
+  }).filter(Boolean);
   return {
+    id: createOfflineId(),
     form_title: profile.formTitle,
     logbook_id: activeLogbook.id,
     submitted_by: currentUser.id,
     log_date: $("log_date").value,
     time_request: $("time_request").value || null,
     time_completion: $("time_completion").value || null,
-    interns: selected.slice(),
+    interns: selectedMembers.map(function (member) { return member.nickname; }),
+    shared_with: selected.filter(function (userId) { return userId !== currentUser.id; }),
     department: $("department").value.trim(),
     task: $("task").value.trim(),
     notes: $("notes").value.trim()
@@ -29,7 +35,7 @@ function buildPayload() {
 
 function resetReportForm() {
   setDateToToday();
-  selected = [profile.myName];
+  selected = [currentUser.id];
   if (activeLogbook) $("entryLogbook").value = activeLogbook.id;
   renderPeople();
 }
@@ -42,7 +48,10 @@ function renderLogbookSelectors() {
       var group = groups.find(function (item) { return item.id === logbook.workspace_id; });
       var option = document.createElement("option");
       option.value = logbook.id;
-      option.textContent = logbook.name + (group ? " · Shared with " + group.name : " · Private");
+      var accessLabel = group ? "Shared with " + group.name :
+        logbook.workspace_id ? "Shared collection" :
+          logbook.owner_id === currentUser.id ? "Private" : "Entry shared with you";
+      option.textContent = logbook.name + " · " + accessLabel;
       select.appendChild(option);
     });
     select.disabled = !logbooks.length;
@@ -51,6 +60,12 @@ function renderLogbookSelectors() {
   $("logbookCount").textContent = String(logbooks.length);
   $("entryFormPanel").hidden = !logbooks.length;
   $("entryNoLogbooks").hidden = !!logbooks.length;
+  var canSubmit = activeLogbook && (
+    activeLogbook.owner_id === currentUser.id ||
+    groups.some(function (group) { return group.id === activeLogbook.workspace_id; })
+  );
+  $("entryFields").hidden = !canSubmit;
+  $("entryReadOnly").hidden = !!canSubmit || !logbooks.length;
   renderLogbooks();
 }
 
@@ -79,11 +94,19 @@ function renderLogbooks() {
     title.textContent = logbook.name;
     var access = document.createElement("p");
     access.className = "entry-meta";
-    access.textContent = group ? "Shared collection · " + group.name : "Private collection · Only you";
+    access.textContent = group
+      ? "Shared collection · " + group.name
+      : logbook.workspace_id
+        ? "Shared collection"
+        : logbook.owner_id === currentUser.id
+          ? "Private collection · Only you"
+          : "Entry shared with you";
     copy.appendChild(title);
     copy.appendChild(access);
     card.appendChild(copy);
 
+    var actions = document.createElement("div");
+    actions.className = "logbook-card-actions";
     var openButton = document.createElement("button");
     openButton.type = "button";
     openButton.className = "secondary";
@@ -92,9 +115,115 @@ function renderLogbooks() {
     openButton.addEventListener("click", function () {
       openLogbook(logbook.id, "logs");
     });
-    card.appendChild(openButton);
+    actions.appendChild(openButton);
+
+    if (logbook.owner_id === currentUser.id) {
+      var editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.className = "secondary icon-action";
+      editButton.setAttribute("aria-label", "Edit collection: " + logbook.name);
+      editButton.title = "Edit collection";
+      appendEntryActionIcon(editButton, "edit");
+      editButton.addEventListener("click", function () {
+        renderLogbookEditor(card, logbook);
+      });
+
+      var deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "secondary icon-action delete-entry";
+      deleteButton.setAttribute("aria-label", "Delete collection: " + logbook.name);
+      deleteButton.title = "Delete collection";
+      appendEntryActionIcon(deleteButton, "delete");
+      deleteButton.addEventListener("click", function () {
+        removeLogbook(logbook, deleteButton);
+      });
+
+      actions.appendChild(editButton);
+      actions.appendChild(deleteButton);
+    }
+
+    card.appendChild(actions);
     list.appendChild(card);
   });
+}
+
+function renderLogbookEditor(card, logbook) {
+  var oldEditor = card.querySelector(".collection-edit-form");
+  if (oldEditor) {
+    oldEditor.remove();
+    return;
+  }
+
+  var form = document.createElement("form");
+  form.className = "collection-edit-form";
+  var label = document.createElement("label");
+  label.textContent = "Collection name";
+  var input = document.createElement("input");
+  input.type = "text";
+  input.name = "name";
+  input.value = logbook.name;
+  input.required = true;
+  input.maxLength = 80;
+  label.appendChild(input);
+  form.appendChild(label);
+
+  var actions = document.createElement("div");
+  actions.className = "actions";
+  var saveButton = document.createElement("button");
+  saveButton.type = "submit";
+  saveButton.className = "primary";
+  saveButton.textContent = "Save";
+  var cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "secondary";
+  cancelButton.textContent = "Cancel";
+  cancelButton.addEventListener("click", function () {
+    form.remove();
+  });
+  actions.appendChild(saveButton);
+  actions.appendChild(cancelButton);
+  form.appendChild(actions);
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var name = input.value.trim();
+    if (!name) {
+      input.focus();
+      return;
+    }
+    saveButton.disabled = true;
+    try {
+      await updateLogbook(logbook.id, name);
+      await loadLogbooks(logbook.id);
+      $("logbookStatus").textContent = "";
+      $("logbookStatus").className = "message";
+      showToast("Collection updated.");
+    } catch (error) {
+      saveButton.disabled = false;
+      $("logbookStatus").textContent = "Could not update collection. " + error.message;
+      $("logbookStatus").className = "message err";
+    }
+  });
+  card.appendChild(form);
+  input.focus();
+  input.select();
+}
+
+async function removeLogbook(logbook, button) {
+  if (!window.confirm('Delete "' + logbook.name + '" and all accomplishments in it? This cannot be undone.')) return;
+  button.disabled = true;
+  try {
+    await deleteLogbook(logbook.id);
+    await loadLogbooks();
+    await loadDashboardData();
+    $("logbookStatus").textContent = "";
+    $("logbookStatus").className = "message";
+    showToast("Collection deleted.");
+  } catch (error) {
+    button.disabled = false;
+    $("logbookStatus").textContent = "Could not delete collection. " + error.message;
+    $("logbookStatus").className = "message err";
+  }
 }
 
 function renderCollectionNavigation() {
@@ -235,11 +364,11 @@ function renderHistory() {
     var details = [entry.department, interns && "Interns: " + interns,
       entry.time_request && "Requested " + entry.time_request,
       entry.time_completion && "Completed " + entry.time_completion,
-      submitter && "Submitted by " + submitter.full_name]
+      submitter && "Submitted by " + submitter.nickname]
       .filter(Boolean).join(" · ");
     var meta = document.createElement("p");
     meta.className = "entry-meta";
-    meta.textContent = details || "Submitted by " + (entry.submitted_by === currentUser.id ? profile.myName : "a group member");
+    meta.textContent = details || "Submitted by " + (entry.submitted_by === currentUser.id ? profile.nickname : "a group member");
 
     var actions = document.createElement("div");
     actions.className = "entry-actions";
@@ -322,6 +451,9 @@ function renderEntryEditor(card, entry) {
   addEditorField(form, "Time of request", "time_request", entry.time_request, "time");
   addEditorField(form, "Time of completion", "time_completion", entry.time_completion, "time");
   addEditorField(form, "Interns (comma-separated)", "interns", (entry.interns || []).join(", "));
+  if (Array.isArray(entry.shared_with)) {
+    form.querySelector('input[name="interns"]').readOnly = true;
+  }
   addEditorField(form, "Task performed", "task", entry.task);
   addEditorField(form, "Notes / resolution", "notes", entry.notes, null, true);
   var buttons = document.createElement("div");
@@ -354,7 +486,7 @@ function renderEntryEditor(card, entry) {
     try {
       await updateAccomplishment(entry.id, changes);
       await loadAccomplishments();
-      setWorkspaceStatus("Accomplishment updated.", "ok");
+      showToast("Accomplishment updated.");
     } catch (error) {
       saveButton.disabled = false;
       setWorkspaceStatus("Could not update accomplishment. " + error.message, "err");
@@ -369,7 +501,7 @@ async function deleteEntry(id, button) {
   try {
     await deleteAccomplishment(id);
     await loadAccomplishments();
-    setWorkspaceStatus("Accomplishment deleted.", "ok");
+    showToast("Accomplishment deleted.");
   } catch (error) {
     button.disabled = false;
     setWorkspaceStatus("Could not delete accomplishment. " + error.message, "err");
@@ -417,8 +549,9 @@ $("createLogbookForm").addEventListener("submit", async function (event) {
   try {
     await createLogbook(name, $("newLogbookGroup").value);
     $("newLogbookName").value = "";
-    $("logbookStatus").textContent = "Collection created.";
-    $("logbookStatus").className = "message ok";
+    $("logbookStatus").textContent = "";
+    $("logbookStatus").className = "message";
+    showToast("Collection created.");
     setActiveView("logbooks");
     $("newLogbookName").focus();
   } catch (error) {
@@ -434,7 +567,7 @@ $("period").addEventListener("change", updateFilterControls);
   $(id).addEventListener("change", renderHistory);
 });
 
-$("report").addEventListener("submit", function (event) {
+$("report").addEventListener("submit", async function (event) {
   event.preventDefault();
   if (!profile || !currentUser) { showLogin(); return; }
   if (!activeLogbook) {
@@ -446,18 +579,49 @@ $("report").addEventListener("submit", function (event) {
     setStatus("Pick at least one intern who did the task.", "err");
     return;
   }
-  var payload = buildPayload();
   setStatus("Saving accomplishment...");
-  saveAccomplishment(payload).then(function () {
-    if ($("period").value === "day") $("filterDay").value = payload.log_date;
-    return loadAccomplishments();
-  }).then(function () {
-    setStatus("Accomplishment saved.", "ok");
+  try {
+    var payload = buildPayload();
+    var savedOffline = false;
+    if (window.navigator.onLine === false) {
+      await enqueueOfflineAction({
+        type: "accomplishment",
+        userId: currentUser.id,
+        payload: payload
+      });
+      savedOffline = true;
+    } else {
+      try {
+        await saveAccomplishment(payload);
+      } catch (error) {
+        if (!isNetworkUnavailable(error)) throw error;
+        await enqueueOfflineAction({
+          type: "accomplishment",
+          userId: currentUser.id,
+          payload: payload
+        });
+        savedOffline = true;
+      }
+    }
+
+    if (savedOffline) {
+      await updateOfflineStatus();
+      showToast("Saved on this device. It will sync when you reconnect.");
+    } else {
+      if ($("period").value === "day") $("filterDay").value = payload.log_date;
+      try {
+        await loadAccomplishments();
+        showToast("Accomplishment added.");
+      } catch (error) {
+        showToast("Accomplishment saved, but the list could not be refreshed. " + error.message, "err");
+      }
+    }
+    setStatus("");
     $("report").reset();
     resetReportForm();
-  }).catch(function (error) {
+  } catch (error) {
     setStatus("Could not save this accomplishment. " + error.message, "err");
-  });
+  }
 });
 
 $("clearBtn").addEventListener("click", function () {
