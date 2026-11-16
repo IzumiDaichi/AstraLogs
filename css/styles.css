@@ -291,7 +291,7 @@ button.link { min-height: auto; background: none; border: 0; color: var(--cyan);
 .offline-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -14px 0 20px; padding: 9px 12px; border: 1px solid #53618c; border-radius: 9px; background: rgb(21 29 57 / 88%); color: var(--muted); font-size: .84rem; }
 .offline-status span { min-width: 0; overflow-wrap: anywhere; }
 .offline-status button { min-height: 34px; flex: 0 0 auto; padding: 5px 10px; font-size: .8rem; }
-.integration-panel { display: grid; gap: 12px; width: 100%; }
+.integration-panel { display: grid; gap: 12px; width: 100%; padding: 19px 21px; }
 .integration-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .integration-heading h2 { margin: 0; }
 .integration-panel .hint { margin: 0; }
@@ -458,6 +458,7 @@ button.link { min-height: auto; background: none; border: 0; color: var(--cyan);
   .topbar h1 { font-size: 1.35rem; }
   .workspace { width: 100%; }
   .form-panel { padding: 18px 15px; }
+  .integration-panel { padding: 16px; }
   .times { grid-template-columns: 1fr; gap: 0; }
   .filters { grid-template-columns: 1fr 1fr; }
   .filters > label { grid-column: 1 / -1; margin-bottom: -8px; }
