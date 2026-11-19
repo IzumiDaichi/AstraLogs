@@ -10,25 +10,49 @@ function renderDashboard() {
     recentDashboardAccomplishments.forEach(function (entry) {
       var card = document.createElement("article");
       card.className = "dashboard-entry";
+      card.tabIndex = 0;
+      card.setAttribute("role", "link");
+      card.setAttribute("aria-label", "Open " +
+        (entry.logbooks && entry.logbooks.name || "collection") +
+        " accomplishments: " + entry.task);
+      card.addEventListener("click", function () {
+        openLogbook(entry.logbook_id, "logs", entry.id, entry.log_date);
+      });
+      card.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openLogbook(entry.logbook_id, "logs", entry.id, entry.log_date);
+        }
+      });
       var copy = document.createElement("div");
+      copy.className = "dashboard-entry-copy";
+      var details = document.createElement("div");
+      details.className = "dashboard-entry-details";
+      var date = document.createElement("span");
+      date.className = "dashboard-entry-date";
+      date.textContent = dateLabel(entry.log_date);
+      var collection = document.createElement("span");
+      collection.className = "dashboard-entry-collection";
+      collection.textContent = entry.logbooks && entry.logbooks.name || "Collection";
+      details.appendChild(date);
+      details.appendChild(collection);
+      if (entry.department) {
+        var department = document.createElement("p");
+        department.className = "dashboard-entry-meta";
+        department.textContent = entry.department;
+        copy.appendChild(department);
+      }
       var task = document.createElement("h3");
       task.textContent = entry.task;
-      var meta = document.createElement("p");
-      meta.className = "entry-meta";
-      var collectionName = entry.logbooks && entry.logbooks.name || "Collection";
-      meta.textContent = dateLabel(entry.log_date) + " · " + collectionName;
       copy.appendChild(task);
-      copy.appendChild(meta);
+      if (entry.notes) {
+        var notes = document.createElement("p");
+        notes.className = "dashboard-entry-notes";
+        notes.textContent = entry.notes;
+        copy.appendChild(notes);
+      }
+      copy.appendChild(details);
       card.appendChild(copy);
-
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "secondary";
-      button.textContent = "Open collection";
-      button.addEventListener("click", function () {
-        openLogbook(entry.logbook_id, "logs");
-      });
-      card.appendChild(button);
       list.appendChild(card);
     });
   }
@@ -89,10 +113,24 @@ function renderDashboardTimeRecords() {
 async function loadDashboardData() {
   var result = await supabaseClient
     .from("accomplishments")
-    .select("id, log_date, task, logbook_id, logbooks(name)")
+    .select("id, log_date, task, department, notes, logbook_id, logbooks(name)")
     .order("log_date", { ascending: false })
     .limit(5);
   if (result.error) throw result.error;
   recentDashboardAccomplishments = result.data || [];
   renderDashboard();
 }
+
+$("dashboardOpenLogs").addEventListener("click", function () {
+  setActiveView("logs");
+  loadAccomplishments().catch(function (error) {
+    setWorkspaceStatus("Could not load accomplishments. " + error.message, "err");
+  });
+});
+
+$("dashboardOpenTimeRecords").addEventListener("click", function () {
+  setActiveView("timeRecords");
+  loadTimeRecords().catch(function (error) {
+    setWorkspaceStatus("Could not load time records. " + error.message, "err");
+  });
+});

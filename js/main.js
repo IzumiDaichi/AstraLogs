@@ -2,6 +2,7 @@ function setActiveView(view) {
   var views = {
     dashboard: $("dashboardView"),
     logs: $("logsView"),
+    report: $("reportView"),
     logbooks: $("logbooksView"),
     entry: $("entryView"),
     team: $("teamView"),
@@ -12,6 +13,7 @@ function setActiveView(view) {
   var titles = {
     dashboard: "Dashboard",
     logs: "Accomplishments",
+    report: "Generated Report",
     logbooks: "Collections",
     entry: "Enter New Entry",
     team: "Team",
@@ -253,6 +255,10 @@ document.querySelectorAll(".nav-item").forEach(function (item) {
     } else if (view === "timeRecords") {
       loadTimeRecords().catch(function (error) {
         setWorkspaceStatus("Could not load time records. " + error.message, "err");
+      });
+    } else if (view === "integrations") {
+      loadIntegrationsSettings().catch(function (error) {
+        setIntegrationStatus("Could not load integration settings. " + error.message, "err");
       });
     }
   });

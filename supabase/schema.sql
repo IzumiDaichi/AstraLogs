@@ -1,6 +1,5 @@
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
-  email text not null,
   username text,
   nickname text not null,
   full_name text not null check (length(trim(full_name)) > 0),
@@ -782,23 +781,22 @@ create policy "Users can view their own or group profiles"
   using (public.can_view_profile(id));
 
 drop policy if exists "Users can create their own profile" on public.profiles;
+drop policy if exists "Users can update their own profile" on public.profiles;
+alter table public.profiles drop column if exists email;
 create policy "Users can create their own profile"
   on public.profiles for insert
   to authenticated
   with check (
     id = auth.uid()
-    and email = (select auth.jwt() ->> 'email')
     and username = lower(split_part((select auth.jwt() ->> 'email'), '@', 1))
   );
 
-drop policy if exists "Users can update their own profile" on public.profiles;
 create policy "Users can update their own profile"
   on public.profiles for update
   to authenticated
   using (id = auth.uid())
   with check (
     id = auth.uid()
-    and email = (select auth.jwt() ->> 'email')
     and username = lower(split_part((select auth.jwt() ->> 'email'), '@', 1))
   );
 
@@ -986,3 +984,163 @@ revoke all on public.profiles, public.workspaces, public.workspace_memberships,
 
 drop function if exists public.bootstrap_workspace(text);
 drop function if exists public.is_workspace_member();
+
+create table if not exists public.ai_integrations (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  provider text not null check (provider in ('openai', 'anthropic', 'gemini')),
+  model text not null check (length(trim(model)) > 0),
+  program text not null default 'Government Internship Program (GIP)',
+  custom_prompt text not null default '',
+  template_path text,
+  template_name text,
+  template_type text check (template_type in ('docx', 'xlsx')),
+  use_custom_template boolean not null default false,
+  encrypted_key text,
+  key_last4 text,
+  updated_at timestamptz not null default now(),
+  check ((encrypted_key is null and key_last4 is null) or
+         (encrypted_key is not null and key_last4 is not null and length(key_last4) = 4))
+);
+
+alter table public.ai_integrations add column if not exists custom_prompt text not null default '';
+alter table public.ai_integrations add column if not exists template_path text;
+alter table public.ai_integrations add column if not exists template_name text;
+alter table public.ai_integrations add column if not exists template_type text;
+alter table public.ai_integrations add column if not exists use_custom_template boolean not null default false;
+
+update public.ai_integrations
+set custom_prompt = $new_report_prompt$Program: {program}
+Period: {date_from} to {date_to}
+Entries (date | department | task | notes):
+{entries}
+
+Instructions:
+1. period_covered: format the date range like "November 3–13, 2026".
+2. specific_tasks: group the entries by type of work and write one imperative sentence per group (e.g. "Install, configure, and troubleshoot printers..."). Merge duplicates and use the notes to decide wording.
+3. output: one past-tense sentence per group mirroring specific_tasks. End each with "Total: N <items>." Count from the entries and use notes for quantities. Never invent tasks or numbers not in the entries.$new_report_prompt$
+where custom_prompt = $old_report_prompt$Program: {program}
+Period: {date_from} to {date_to}
+Entries (date | department | task | notes):
+{entries}
+
+Instructions:
+1. period_covered: format the range like 'November 3-13, 2026'.
+2. specific_tasks: group entries by type of work (e.g. network, system reinstallation, troubleshooting, printers, scanners, UPS, hardware, seminars). Write one imperative sentence per group, such as 'Install, configure, and troubleshoot printers...'. Merge duplicates. Use the notes to decide wording and details.
+3. output: one past-tense sentence per group, mirroring specific_tasks. End each sentence with 'Total: N <items>.' N must be counted from the entries, using notes for quantities (e.g. '5 cables' counts as 5). Never invent tasks or numbers not present in the entries.$old_report_prompt$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.ai_integrations'::regclass
+      and conname = 'ai_integrations_template_type_check'
+  ) then
+    alter table public.ai_integrations
+      add constraint ai_integrations_template_type_check
+      check (template_type is null or template_type in ('docx', 'xlsx'));
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.ai_integrations'::regclass
+      and conname = 'ai_integrations_template_metadata_check'
+  ) then
+    alter table public.ai_integrations
+      add constraint ai_integrations_template_metadata_check
+      check (
+        (template_path is null and template_name is null and template_type is null and not use_custom_template)
+        or (template_path is not null and template_name is not null and template_type is not null)
+      );
+  end if;
+end
+$$;
+
+create table if not exists public.ai_report_usage (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  report_day date not null,
+  report_count integer not null check (report_count between 1 and 10),
+  primary key (user_id, report_day)
+);
+
+alter table public.ai_integrations enable row level security;
+alter table public.ai_report_usage enable row level security;
+revoke all on public.ai_integrations, public.ai_report_usage from anon, authenticated;
+grant all on public.ai_integrations, public.ai_report_usage to service_role;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'report-templates',
+  'report-templates',
+  false,
+  2097152,
+  array[
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  ]
+)
+on conflict (id) do update
+set public = false,
+    file_size_limit = 2097152,
+    allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Users can view own report templates" on storage.objects;
+create policy "Users can view own report templates"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'report-templates'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "Users can upload own report templates" on storage.objects;
+create policy "Users can upload own report templates"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'report-templates'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "Users can update own report templates" on storage.objects;
+create policy "Users can update own report templates"
+  on storage.objects for update
+  to authenticated
+  using (
+    bucket_id = 'report-templates'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'report-templates'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "Users can delete own report templates" on storage.objects;
+create policy "Users can delete own report templates"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'report-templates'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create or replace function public.consume_ai_report_quota(target_user_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  quota_consumed boolean;
+begin
+  insert into public.ai_report_usage (user_id, report_day, report_count)
+  values (target_user_id, timezone('utc', now())::date, 1)
+  on conflict (user_id, report_day) do update
+    set report_count = ai_report_usage.report_count + 1
+    where ai_report_usage.report_count < 10
+  returning true into quota_consumed;
+
+  return coalesce(quota_consumed, false);
+end;
+$$;
+
+revoke all on function public.consume_ai_report_quota(uuid) from public, anon, authenticated;
+grant execute on function public.consume_ai_report_quota(uuid) to service_role;

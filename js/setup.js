@@ -6,6 +6,11 @@ function setAuthStatus(text, kind) {
 function showLogin() {
   profile = null;
   currentUser = null;
+  selectedReportEntryIds.clear();
+  clearReportPreview();
+  updateReportSelectionUI();
+  $("integrationApiKey").value = "";
+  if (typeof window.aiIntegrationSettings !== "undefined") window.aiIntegrationSettings = null;
   authMode = "login";
   $("app").hidden = true;
   $("setup").hidden = false;
@@ -40,7 +45,7 @@ async function loadProfileForUser(user) {
   try {
     result = await supabaseClient
       .from("profiles")
-      .select("id, email, username, nickname, full_name, department")
+      .select("id, username, nickname, full_name, department")
       .eq("id", user.id)
       .maybeSingle();
   } catch (error) {
@@ -59,7 +64,6 @@ async function loadProfileForUser(user) {
       ("user" + user.id.replace(/-/g, "").slice(0, 12));
     var upgradedProfile = await supabaseClient.from("profiles").upsert({
       id: user.id,
-      email: user.email,
       username: accountName,
       nickname: result.data ? result.data.nickname || result.data.full_name : accountName,
       full_name: result.data ? result.data.full_name : accountName,
@@ -69,7 +73,6 @@ async function loadProfileForUser(user) {
   }
   profile = {
     id: user.id,
-    email: user.email,
     username: accountName,
     nickname: result.data ? result.data.nickname || result.data.full_name : accountName,
     myDept: result.data ? result.data.department : "Unspecified",
@@ -122,10 +125,12 @@ async function showApp(offlineSnapshot) {
   $("sidebarUsername").textContent = "@" + profile.username;
   $("userAvatar").textContent = profile.nickname.trim().charAt(0).toUpperCase();
   document.title = "AstraLogs";
+  $("period").value = "all";
   if (!$("filterDay").value) $("filterDay").value = todayString();
   if (!$("filterWeek").value) $("filterWeek").value = todayString();
   if (!$("filterFrom").value) $("filterFrom").value = todayString();
   if (!$("filterTo").value) $("filterTo").value = todayString();
+  updateFilterControls();
   setDateToToday();
   selected = [currentUser.id];
   renderPeople();
@@ -258,7 +263,6 @@ $("loginForm").addEventListener("submit", async function (event) {
     currentUser = signup.data.user;
     var newProfile = await supabaseClient.from("profiles").insert({
       id: currentUser.id,
-      email: currentUser.email,
       username: username,
       nickname: nickname,
       full_name: nickname,
@@ -271,7 +275,6 @@ $("loginForm").addEventListener("submit", async function (event) {
     }
     profile = {
       id: currentUser.id,
-      email: currentUser.email,
       username: username,
       nickname: nickname,
       myDept: "Unspecified",
@@ -329,7 +332,6 @@ $("profileForm").addEventListener("submit", async function (event) {
   }
   var result = await supabaseClient.from("profiles").upsert({
     id: currentUser.id,
-    email: currentUser.email,
     username: profile.username,
     nickname: nickname,
     full_name: nickname,
@@ -341,7 +343,6 @@ $("profileForm").addEventListener("submit", async function (event) {
   }
   profile = {
     id: currentUser.id,
-    email: currentUser.email,
     username: profile.username,
     nickname: nickname,
     myDept: department,

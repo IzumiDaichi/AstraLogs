@@ -2,6 +2,7 @@ var currentUser = null;
 var profile = null;
 var teamMembers = [];
 var entryMembers = [];
+var selectedReportEntryIds = new Set();
 var selected = [];
 var accomplishments = [];
 var authMode = "login";

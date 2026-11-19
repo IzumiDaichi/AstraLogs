@@ -127,11 +127,17 @@
         </div>
         <div class="dashboard-grid">
           <section class="panel dashboard-panel" aria-labelledby="dashboardAccomplishmentsTitle">
-            <h2 id="dashboardAccomplishmentsTitle">Recent accomplishments</h2>
+            <div class="dashboard-panel-heading">
+              <h2 id="dashboardAccomplishmentsTitle">Recent accomplishments</h2>
+              <button id="dashboardOpenLogs" type="button" class="link">Open accomplishments</button>
+            </div>
             <div id="dashboardAccomplishments" class="dashboard-list" aria-live="polite"></div>
           </section>
           <section class="panel dashboard-panel" aria-labelledby="dashboardTimeTitle">
-            <h2 id="dashboardTimeTitle">Recent time records</h2>
+            <div class="dashboard-panel-heading">
+              <h2 id="dashboardTimeTitle">Recent time records</h2>
+              <button id="dashboardOpenTimeRecords" type="button" class="link">Open time records</button>
+            </div>
             <div id="dashboardTimeRecords" class="dashboard-time-list" aria-live="polite"></div>
           </section>
         </div>
@@ -147,34 +153,80 @@
           <select id="logsLogbook" aria-label="Choose a collection"></select>
           <span id="entryCount" class="count"></span>
         </div>
-        <div class="panel filters">
-          <label for="period">Show</label>
-          <select id="period">
-            <option value="day">By day</option>
-            <option value="week">By week</option>
-            <option value="custom">Custom range</option>
-            <option value="all">All accomplishments</option>
-          </select>
-          <div id="dayFilter" class="filter-date">
-            <label for="filterDay">Date</label>
+        <section class="panel filters" aria-labelledby="filtersTitle">
+          <div class="filter-heading">
+            <h2 id="filtersTitle">Filter accomplishments</h2>
+            <button id="clearFilters" type="button" class="link">Clear filters</button>
+          </div>
+          <div class="filter-control">
+            <label for="period">Date range</label>
+            <select id="period">
+              <option value="all" selected>All dates</option>
+              <option value="day">Selected day</option>
+              <option value="week">Week containing</option>
+              <option value="custom">Custom range</option>
+            </select>
+          </div>
+          <div id="dayFilter" class="filter-control" hidden>
+            <label for="filterDay">Day</label>
             <input id="filterDay" type="date">
           </div>
-          <div id="weekFilter" class="filter-date" hidden>
+          <div id="weekFilter" class="filter-control" hidden>
             <label for="filterWeek">Week containing</label>
             <input id="filterWeek" type="date">
           </div>
           <div id="customFilter" class="custom-dates" hidden>
-            <div>
+            <div class="filter-control">
               <label for="filterFrom">From</label>
               <input id="filterFrom" type="date">
             </div>
-            <div>
+            <div class="filter-control">
               <label for="filterTo">To</label>
-              <input id="filterTo" type="date">
+              <input id="filterTo" type="date" aria-describedby="filterRangeStatus">
             </div>
+            <p id="filterRangeStatus" class="filter-error" role="status" aria-live="polite" hidden></p>
+          </div>
+        </section>
+        <div class="report-selection-toolbar">
+          <p id="reportSelectionStatus" class="hint">Select accomplishments to generate a report.</p>
+          <div class="actions">
+            <button id="selectVisibleEntriesButton" type="button" class="secondary">Select all on this page</button>
+            <button id="generateReportButton" type="button" class="primary" disabled>Generate Report</button>
           </div>
         </div>
         <div id="historyList" class="entry-list" aria-live="polite"></div>
+        <nav id="historyPagination" class="pagination" aria-label="Accomplishment pages" hidden>
+          <button id="historyPreviousPage" type="button" class="secondary">Previous</button>
+          <span id="historyPageStatus" class="hint" aria-live="polite"></span>
+          <button id="historyNextPage" type="button" class="secondary">Next</button>
+        </nav>
+      </section>
+
+      <section id="reportView" class="app-view" hidden>
+        <section id="reportLoading" class="panel report-loading" role="status" aria-live="polite" aria-busy="true">
+          <span class="report-spinner" aria-hidden="true"></span>
+          <h2 id="reportPageTitle">Generating your report</h2>
+          <p class="hint">Your selected accomplishments are being prepared.</p>
+        </section>
+        <section id="reportResult" class="panel report-preview" hidden aria-labelledby="reportPreviewTitle">
+          <h2 id="reportPreviewTitle">Your generated report</h2>
+          <p class="hint">Review or edit the report, then download or print it.</p>
+          <label for="reportPeriodCovered">Period covered</label>
+          <input id="reportPeriodCovered" type="text" maxlength="160">
+          <label for="reportSpecificTasks">Specific tasks <span class="hint">One task per line</span></label>
+          <textarea id="reportSpecificTasks" rows="4" maxlength="12000"></textarea>
+          <label for="reportOutput">Completed work <span class="hint">One sentence per line</span></label>
+          <textarea id="reportOutput" rows="5" maxlength="12000"></textarea>
+          <div class="actions">
+            <button id="copyReportButton" type="button" class="secondary">Copy</button>
+            <button id="downloadReportButton" type="button" class="secondary">Download report</button>
+            <button id="printReportButton" type="button" class="secondary">Print</button>
+          </div>
+          <p id="reportPreviewStatus" class="message" role="status" aria-live="polite"></p>
+        </section>
+        <p id="generateReportStatus" class="message" role="status" aria-live="polite"></p>
+        <button id="reportIntegrationsLink" type="button" class="secondary" hidden>Set up AI integration</button>
+        <button id="reportBackButton" type="button" class="secondary" hidden>Back to accomplishments</button>
       </section>
 
       <section id="logbooksView" class="app-view" hidden>
@@ -217,12 +269,12 @@
             <div id="entryFields">
             <div class="times">
               <div>
-                <label for="log_date">Date recorded <span class="required">*</span></label>
-                <input id="log_date" type="date" required>
-              </div>
-              <div>
                 <label for="department">Department <span class="required">*</span></label>
                 <input id="department" type="text" required placeholder="Department where the task was done">
+              </div>
+              <div>
+                <label for="log_date">Date recorded <span class="required">*</span></label>
+                <input id="log_date" type="date" required>
               </div>
             </div>
             <div class="times">
@@ -329,7 +381,7 @@
           <div class="time-record-heading">
             <div>
               <h2 id="quickPunchTitle">Quick punch</h2>
-              <p class="hint">The current time determines whether a punch is Morning or Afternoon.</p>
+              <p class="hint">Quick punches use your local time. If Morning In is recorded and Morning Out is missing, Quick Log Out fills Morning Out first.</p>
             </div>
           </div>
           <div class="quick-punch-actions">
@@ -373,17 +425,72 @@
       <section id="integrationsView" class="app-view" hidden>
         <div class="storage-note">
           <span class="storage-dot" aria-hidden="true"></span>
-          AI provider connections are not available yet.
+          Connect your own AI provider. API keys are encrypted on the server and never sent to Make.com.
         </div>
         <section class="panel integration-panel" aria-labelledby="integrationsTitle">
           <div class="integration-heading">
             <h2 id="integrationsTitle">AI integrations</h2>
-            <span class="development-badge">In development</span>
           </div>
-          <p class="hint">API-key connections and secure key storage are planned for a future update. No keys are collected or saved yet.</p>
-          <label for="integrationApiKey">AI API key</label>
-          <input id="integrationApiKey" type="password" placeholder="Coming soon" disabled>
-          <button type="button" class="primary" disabled>Save API key</button>
+          <p class="hint">Your API key is encrypted before it is stored. The saved key is never returned to this page.</p>
+          <div class="integration-fields">
+            <div>
+              <label for="integrationProvider">Provider</label>
+              <select id="integrationProvider">
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+            </div>
+            <div>
+              <label for="integrationModel">Model</label>
+              <input id="integrationModel" type="text" maxlength="120" required>
+            </div>
+            <div>
+              <label for="integrationProgram">Program</label>
+              <input id="integrationProgram" type="text" maxlength="160" value="Government Internship Program (GIP)">
+            </div>
+          </div>
+          <label for="integrationPrompt">Custom prompt</label>
+          <textarea id="integrationPrompt" rows="12" maxlength="4000"></textarea>
+          <p id="integrationPromptCount" class="hint" aria-live="polite">0 / 4000 characters</p>
+          <p class="hint">Use {program}, {date_from}, {date_to}, and {entries}. The {entries} placeholder is required. The report structure is always validated.</p>
+          <p id="integrationPromptWarning" class="hint" role="status" aria-live="polite"></p>
+          <div class="actions">
+            <button id="saveIntegrationPromptButton" type="button" class="primary">Save prompt</button>
+            <button id="resetIntegrationPrompt" type="button" class="secondary">Reset to default</button>
+          </div>
+          <p id="integrationPromptStatus" class="message" role="status" aria-live="polite"></p>
+          <p id="integrationKeyStatus" class="hint" role="status" aria-live="polite"></p>
+          <button id="replaceIntegrationKey" type="button" class="secondary" hidden>Replace key</button>
+          <label id="integrationKeyLabel" for="integrationApiKey">API key</label>
+          <input id="integrationApiKey" type="password" autocomplete="off" maxlength="2048" placeholder="Enter your provider API key">
+          <div class="actions">
+            <button id="saveIntegrationButton" type="button" class="primary">Save</button>
+            <button id="testIntegrationButton" type="button" class="secondary">Test key</button>
+            <button id="removeIntegrationButton" type="button" class="secondary" hidden>Remove key</button>
+          </div>
+          <p id="integrationStatus" class="message" role="status" aria-live="polite"></p>
+        </section>
+        <section class="panel integration-panel template-panel" aria-labelledby="reportTemplateTitle">
+          <div class="integration-heading">
+            <h2 id="reportTemplateTitle">Report template</h2>
+          </div>
+          <p class="hint">Upload a Word or Excel form up to 2 MB. Templates are private to your account. Files are filled in this browser.</p>
+          <p class="hint">Name uses your profile nickname, Office uses your department, and {id_no} and {supervisor} are left blank.</p>
+          <label for="reportTemplateMode">Template for reports</label>
+          <select id="reportTemplateMode">
+            <option value="default">Default template</option>
+            <option id="myReportTemplateOption" value="custom" disabled>Use my template</option>
+          </select>
+          <p id="reportTemplateCurrent" class="hint">No custom template uploaded.</p>
+          <label for="reportTemplateFile">Upload Word (.docx) or Excel (.xlsx) form</label>
+          <input id="reportTemplateFile" type="file" accept=".docx,.xlsx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <div class="actions">
+            <button id="uploadReportTemplate" type="button" class="primary">Upload template</button>
+            <button id="testReportTemplate" type="button" class="secondary" disabled>Test template</button>
+            <button id="removeReportTemplate" type="button" class="secondary" hidden>Remove template</button>
+          </div>
+          <p id="reportTemplateStatus" class="message" role="status" aria-live="polite"></p>
         </section>
       </section>
     </div>
@@ -403,10 +510,13 @@
 <script src="js/backend.js"></script>
 <script src="js/setup.js"></script>
 <script src="js/people.js"></script>
+<script src="js/report_templates.js"></script>
+<script src="js/ai_reports.js"></script>
 <script src="js/report.js"></script>
 <script src="js/time_records.js"></script>
 <script src="js/dashboard.js"></script>
 <script src="js/main.js"></script>
+<script src="js/integrations.js"></script>
 <script src="js/pwa.js"></script>
 </body>
 </html>

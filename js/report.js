@@ -257,10 +257,38 @@ function renderCollectionNavigation() {
   });
 }
 
-async function openLogbook(logbookId, view) {
+async function openLogbook(logbookId, view, targetEntryId, targetEntryDate) {
   try {
     await selectLogbook(logbookId);
+    if (view === "logs" && targetEntryId) {
+      $("period").value = "day";
+      $("filterDay").value = targetEntryDate;
+      updateFilterControls();
+      var matchingEntries = getFilteredAccomplishments();
+      matchingEntries.sort(function (a, b) {
+        var aOrder = a.log_date + " " + (a.time_request || "");
+        var bOrder = b.log_date + " " + (b.time_request || "");
+        return bOrder.localeCompare(aOrder);
+      });
+      var targetIndex = matchingEntries.findIndex(function (entry) {
+        return String(entry.id) === String(targetEntryId);
+      });
+      if (targetIndex !== -1) {
+        historyPage = Math.floor(targetIndex / historyPageSize);
+        renderHistory();
+      }
+    }
     setActiveView(view);
+    if (view === "logs" && targetEntryId) {
+      var targetCard = Array.prototype.find.call(
+        $("historyList").querySelectorAll(".entry"),
+        function (card) { return card.getAttribute("data-entry-id") === String(targetEntryId); }
+      );
+      if (targetCard) {
+        targetCard.classList.add("dashboard-entry-target");
+        targetCard.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
     if (view === "entry") $("department").focus();
   } catch (error) {
     setWorkspaceStatus("Could not open logbook. " + error.message, "err");
@@ -275,13 +303,21 @@ function dateLabel(dateString) {
   });
 }
 
-function renderHistory() {
+var historyPage = 0;
+var historyPageSize = 25;
+
+function getFilteredAccomplishments() {
   var period = $("period").value;
   var day = $("filterDay").value;
   var week = $("filterWeek").value;
   var from = $("filterFrom").value;
   var to = $("filterTo").value;
-  var filtered = accomplishments.filter(function (entry) {
+  var invalidRange = period === "custom" && from && to && from > to;
+  $("filterRangeStatus").hidden = !invalidRange;
+  $("filterRangeStatus").textContent = invalidRange ? "The start date must be on or before the end date." : "";
+
+  return accomplishments.filter(function (entry) {
+    if (invalidRange) return false;
     if (period === "day") return entry.log_date === day;
     if (period === "week" && week) {
       var selectedDate = new Date(week + "T00:00:00");
@@ -297,15 +333,48 @@ function renderHistory() {
     }
     return true;
   });
+}
+
+function getVisibleAccomplishments() {
+  var filtered = getFilteredAccomplishments();
+  filtered.sort(function (a, b) {
+    var aOrder = a.log_date + " " + (a.time_request || "");
+    var bOrder = b.log_date + " " + (b.time_request || "");
+    return bOrder.localeCompare(aOrder);
+  });
+  return filtered.slice(historyPage * historyPageSize, (historyPage + 1) * historyPageSize);
+}
+
+function renderHistory() {
+  var currentEntryIds = new Set(accomplishments.map(function (entry) { return entry.id; }));
+  selectedReportEntryIds.forEach(function (id) {
+    if (!currentEntryIds.has(id)) selectedReportEntryIds.delete(id);
+  });
+  var filtered = getFilteredAccomplishments();
   filtered.sort(function (a, b) {
     var aOrder = a.log_date + " " + (a.time_request || "");
     var bOrder = b.log_date + " " + (b.time_request || "");
     return bOrder.localeCompare(aOrder);
   });
 
-  $("entryCount").textContent = filtered.length + (filtered.length === 1 ? " accomplishment" : " accomplishments");
+  var pageCount = Math.ceil(filtered.length / historyPageSize);
+  historyPage = Math.max(0, Math.min(historyPage, pageCount - 1));
+  var startIndex = historyPage * historyPageSize;
+  var visibleEntries = filtered.slice(startIndex, startIndex + historyPageSize);
+  var shownEnd = Math.min(startIndex + visibleEntries.length, filtered.length);
+  $("entryCount").textContent = filtered.length
+    ? "Showing " + (startIndex + 1) + "–" + shownEnd + " of " + filtered.length +
+      " (" + accomplishments.length + " total)"
+    : "0 of " + accomplishments.length + " accomplishments";
   var list = $("historyList");
   list.textContent = "";
+  var pagination = $("historyPagination");
+  pagination.hidden = pageCount <= 1;
+  $("historyPreviousPage").disabled = historyPage === 0;
+  $("historyNextPage").disabled = historyPage >= pageCount - 1;
+  $("historyPageStatus").textContent = pageCount
+    ? "Page " + (historyPage + 1) + " of " + pageCount
+    : "No pages";
   if (!filtered.length) {
     var empty = document.createElement("div");
     empty.className = "empty-state";
@@ -332,12 +401,30 @@ function renderHistory() {
       empty.appendChild(createButton);
     }
     list.appendChild(empty);
+    updateReportSelectionUI();
     return;
   }
 
-  filtered.forEach(function (entry) {
+  visibleEntries.forEach(function (entry) {
     var card = document.createElement("article");
-    card.className = "entry";
+    var isSelected = selectedReportEntryIds.has(entry.id);
+    card.className = "entry" + (isSelected ? " selected" : "");
+    card.setAttribute("data-entry-id", entry.id);
+    var selectButton = document.createElement("button");
+    selectButton.type = "button";
+    selectButton.className = "entry-select-indicator";
+    selectButton.setAttribute("aria-label", (isSelected ? "Deselect" : "Select") + " accomplishment: " + entry.task);
+    selectButton.setAttribute("aria-pressed", String(isSelected));
+    selectButton.title = isSelected ? "Deselect accomplishment" : "Select accomplishment";
+    selectButton.addEventListener("click", function (event) {
+      event.stopPropagation();
+      toggleReportEntrySelection(entry.id, card, selectButton);
+    });
+    card.addEventListener("click", function (event) {
+      if (event.target instanceof Element && event.target.closest("button, input, textarea, select, a, .entry-editor")) return;
+      toggleReportEntrySelection(entry.id, card, selectButton);
+    });
+    card.appendChild(selectButton);
     var top = document.createElement("div");
     top.className = "entry-top";
     var task = document.createElement("p");
@@ -345,6 +432,12 @@ function renderHistory() {
     task.textContent = entry.task;
     var copy = document.createElement("div");
     copy.className = "entry-copy";
+    if (entry.department) {
+      var department = document.createElement("p");
+      department.className = "entry-department";
+      department.textContent = entry.department;
+      copy.appendChild(department);
+    }
     copy.appendChild(task);
     if (entry.notes) {
       var notes = document.createElement("p");
@@ -361,7 +454,7 @@ function renderHistory() {
 
     var submitter = entryMembers.find(function (member) { return member.id === entry.submitted_by; });
     var interns = Array.isArray(entry.interns) ? entry.interns.join(", ") : entry.interns;
-    var details = [entry.department, interns && "Interns: " + interns,
+    var details = [interns && "Interns: " + interns,
       entry.time_request && "Requested " + entry.time_request,
       entry.time_completion && "Completed " + entry.time_completion,
       submitter && "Submitted by " + submitter.nickname]
@@ -400,6 +493,19 @@ function renderHistory() {
 
     list.appendChild(card);
   });
+  updateReportSelectionUI();
+}
+
+function toggleReportEntrySelection(entryId, card, selectButton) {
+  var isSelected = selectedReportEntryIds.has(entryId);
+  if (isSelected) selectedReportEntryIds.delete(entryId);
+  else selectedReportEntryIds.add(entryId);
+  card.classList.toggle("selected", !isSelected);
+  selectButton.setAttribute("aria-pressed", String(!isSelected));
+  selectButton.setAttribute("aria-label", (!isSelected ? "Deselect" : "Select") +
+    " accomplishment: " + card.querySelector(".entry-task").textContent);
+  selectButton.title = !isSelected ? "Deselect accomplishment" : "Select accomplishment";
+  updateReportSelectionUI();
 }
 
 function appendEntryActionIcon(button, action) {
@@ -446,14 +552,44 @@ function renderEntryEditor(card, entry) {
   }
   var form = document.createElement("form");
   form.className = "entry-editor";
-  addEditorField(form, "Date of log", "log_date", entry.log_date, "date");
   addEditorField(form, "Department", "department", entry.department);
+  addEditorField(form, "Date of log", "log_date", entry.log_date, "date");
   addEditorField(form, "Time of request", "time_request", entry.time_request, "time");
   addEditorField(form, "Time of completion", "time_completion", entry.time_completion, "time");
-  addEditorField(form, "Interns (comma-separated)", "interns", (entry.interns || []).join(", "));
-  if (Array.isArray(entry.shared_with)) {
-    form.querySelector('input[name="interns"]').readOnly = true;
+  var internsField = document.createElement("fieldset");
+  internsField.className = "entry-interns";
+  var internsLegend = document.createElement("legend");
+  internsLegend.textContent = "Interns";
+  internsField.appendChild(internsLegend);
+  var internOptions = document.createElement("div");
+  internOptions.className = "entry-intern-options";
+  var existingInterns = Array.isArray(entry.interns) ? entry.interns :
+    typeof entry.interns === "string" ? entry.interns.split(",").map(function (name) { return name.trim(); }).filter(Boolean) : [];
+  var members = entryMembers.slice();
+  if (currentUser && !members.some(function (member) { return member.id === currentUser.id; })) {
+    members.unshift({ id: currentUser.id, nickname: profile.nickname });
   }
+  existingInterns.forEach(function (name) {
+    if (!members.some(function (member) { return member.nickname === name; })) {
+      members.push({ nickname: name });
+    }
+  });
+  members.forEach(function (member) {
+    var chip = document.createElement("span");
+    chip.className = "chip";
+    var label = document.createElement("label");
+    var checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.name = "interns";
+    checkbox.value = member.nickname;
+    checkbox.checked = existingInterns.indexOf(member.nickname) !== -1;
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(member.nickname));
+    chip.appendChild(label);
+    internOptions.appendChild(chip);
+  });
+  internsField.appendChild(internOptions);
+  form.appendChild(internsField);
   addEditorField(form, "Task performed", "task", entry.task);
   addEditorField(form, "Notes / resolution", "notes", entry.notes, null, true);
   var buttons = document.createElement("div");
@@ -479,7 +615,7 @@ function renderEntryEditor(card, entry) {
       department: String(data.get("department")).trim(),
       time_request: data.get("time_request") || null,
       time_completion: data.get("time_completion") || null,
-      interns: String(data.get("interns")).split(",").map(function (name) { return name.trim(); }).filter(Boolean),
+      interns: data.getAll("interns"),
       task: String(data.get("task")).trim(),
       notes: String(data.get("notes")).trim()
     };
@@ -518,8 +654,18 @@ function updateFilterControls() {
   $("dayFilter").hidden = period !== "day";
   $("weekFilter").hidden = period !== "week";
   $("customFilter").hidden = period !== "custom";
+  historyPage = 0;
   renderHistory();
 }
+
+$("clearFilters").addEventListener("click", function () {
+  $("period").value = "all";
+  $("filterDay").value = todayString();
+  $("filterWeek").value = todayString();
+  $("filterFrom").value = "";
+  $("filterTo").value = "";
+  updateFilterControls();
+});
 
 $("logsLogbook").addEventListener("change", function () {
   selectLogbook($("logsLogbook").value).catch(function (error) {
@@ -564,7 +710,36 @@ $("createLogbookForm").addEventListener("submit", async function (event) {
 
 $("period").addEventListener("change", updateFilterControls);
 ["filterDay", "filterWeek", "filterFrom", "filterTo"].forEach(function (id) {
-  $(id).addEventListener("change", renderHistory);
+  $(id).addEventListener("change", function () {
+    historyPage = 0;
+    renderHistory();
+  });
+});
+
+$("selectVisibleEntriesButton").addEventListener("click", function () {
+  var visibleEntries = getVisibleAccomplishments();
+  var allVisibleSelected = visibleEntries.length > 0 && visibleEntries.every(function (entry) {
+    return selectedReportEntryIds.has(entry.id);
+  });
+
+  visibleEntries.forEach(function (entry) {
+    if (allVisibleSelected) selectedReportEntryIds.delete(entry.id);
+    else selectedReportEntryIds.add(entry.id);
+  });
+
+  renderHistory();
+});
+
+$("historyPreviousPage").addEventListener("click", function () {
+  if (historyPage === 0) return;
+  historyPage -= 1;
+  renderHistory();
+});
+
+$("historyNextPage").addEventListener("click", function () {
+  if ((historyPage + 1) * historyPageSize >= getFilteredAccomplishments().length) return;
+  historyPage += 1;
+  renderHistory();
 });
 
 $("report").addEventListener("submit", async function (event) {

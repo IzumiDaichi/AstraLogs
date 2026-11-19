@@ -302,13 +302,33 @@ async function syncQueuedTimePunch(action) {
 
 async function handleQuickPunch(direction, button) {
   button.disabled = true;
-  var now = new Date();
-  var period = now.getHours() < 12 ? "morning" : "afternoon";
-  var field = period + "_" + direction;
-  var label = field.replace("_", " ");
-  label = label.charAt(0).toUpperCase() + label.slice(1);
-  setTimeRecordStatus("Recording " + label + "...");
   try {
+    var now = new Date();
+    var period = now.getHours() < 12 ? "morning" : "afternoon";
+    if (direction === "out" && period === "afternoon") {
+      var todayRecord = timeRecords.find(function (record) {
+        return record.work_date === todayString();
+      });
+      var pendingMorningIn = false;
+      var pendingMorningOut = false;
+      if (window.navigator.onLine === false) {
+        var pendingPunches = await getPendingOfflineActions(currentUser.id);
+        pendingPunches.forEach(function (action) {
+          if (action.type !== "time_punch" || action.workDate !== todayString()) return;
+          if (action.field === "morning_in") pendingMorningIn = true;
+          if (action.field === "morning_out") pendingMorningOut = true;
+        });
+      }
+      var hasMorningIn = (todayRecord && todayRecord.morning_in) || pendingMorningIn;
+      var hasMorningOut = (todayRecord && todayRecord.morning_out) || pendingMorningOut;
+      if (hasMorningIn && !hasMorningOut) {
+        period = "morning";
+      }
+    }
+    var field = period + "_" + direction;
+    var label = field.replace("_", " ");
+    label = label.charAt(0).toUpperCase() + label.slice(1);
+    setTimeRecordStatus("Recording " + label + "...");
     var savedOffline = await saveTimePunch(todayString(), field, now.toISOString(), false);
     setTimeRecordStatus("");
     showToast(savedOffline ? "Saved on this device. It will sync when you reconnect." : label + " recorded.");

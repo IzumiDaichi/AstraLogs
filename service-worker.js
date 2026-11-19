@@ -1,4 +1,4 @@
-const CACHE_NAME = "astralogs-shell-v5";
+const CACHE_NAME = "astralogs-shell-v7";
 const SUPABASE_CLIENT_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
 const APP_SHELL = [
   "./index.html",
@@ -13,10 +13,13 @@ const APP_SHELL = [
   "./js/backend.js",
   "./js/setup.js",
   "./js/people.js",
+  "./js/report_templates.js",
+  "./js/ai_reports.js",
   "./js/report.js",
   "./js/time_records.js",
   "./js/dashboard.js",
   "./js/main.js",
+  "./js/integrations.js",
   "./js/pwa.js",
   "./icons/astralogs.svg",
   "./icons/ios-safari.svg",

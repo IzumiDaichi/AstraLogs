@@ -76,6 +76,7 @@ async function loadEntryMembers() {
 }
 
 async function loadAccomplishments() {
+  historyPage = 0;
   if (!activeLogbook) {
     accomplishments = [];
     renderHistory();
@@ -222,6 +223,8 @@ async function loadLogbooks(preferredLogbookId) {
 
 async function selectLogbook(logbookId) {
   activeLogbook = logbooks.find(function (logbook) { return logbook.id === logbookId; }) || null;
+  selectedReportEntryIds.clear();
+  clearReportPreview();
   selected = [currentUser.id];
   renderLogbookSelectors();
   await loadEntryMembers();
